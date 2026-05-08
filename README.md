@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ClearanceClarence/Ledger/refs/heads/main/ledger/assets/logo.svg" alt="Ledger" width="80">
+  <img src="https://raw.githubusercontent.com/ClearanceClarence/Ledger/refs/heads/main/ledger/assets/logo.svg" alt="Ledger" width="540">
 </p>
 
 <h1 align="center">Ledger</h1>
@@ -684,7 +684,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 ---
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ClearanceClarence/Ledger/main/assets/logo.svg" alt="Ledger" width="28">
+  <img src="https://raw.githubusercontent.com/ClearanceClarence/Ledger/refs/heads/main/ledger/assets/logo.svg" alt="Ledger" width="360">
   <br>
   <sub>Built with PHP, vanilla JS, and zero external dependencies.</sub>
   <br>
