@@ -1,10 +1,61 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ClearanceClarence/DBForge/refs/heads/main/dbforge/assets/logo.svg" alt="DBForge" width="320">
+  <img src="https://raw.githubusercontent.com/ClearanceClarence/Ledger/refs/heads/main/ledger/assets/logo.svg" alt="Ledger" width="40">
 </p>
 
 # Changelog
 
-All notable changes to [DBForge](https://github.com/ClearanceClarence/DBForge) are documented here.
+All notable changes to [Ledger](https://github.com/ClearanceClarence/Ledger) are documented here.
+
+---
+
+## [1.8.2] — 2026-05-08
+
+> Rebrand: DBForge is now Ledger. Complete identity overhaul with new logo and naming.
+
+### Branding
+
+- **New name: Ledger.** All product references renamed across the codebase, UI, documentation, and assets. The "DBForge" identity is retired.
+- **New logo.** Designed around a book/ledger metaphor — bracket characters framing three horizontal bars representing rows. Available as a square mark (`assets/mark.svg`) and a wordmark version (`assets/logo.svg`).
+- **First stable release.** Version drops the `-alpha` suffix.
+
+### Breaking Changes
+
+- **Install path renamed** from `dbforge/` to `ledger/`. Existing users must move their installation directory or re-extract.
+- **Session keys changed.** Cookies and session storage previously prefixed with `dbforge_` are now prefixed with `ledger_`. You will need to log in once after upgrading.
+- **JavaScript globals.** `DBForge.confirm()`, `DBForge.alert()`, etc. are now `Ledger.confirm()`, `Ledger.alert()`, etc. Affects any custom JavaScript that integrated with the in-app modal helpers.
+- **PHP constant** `DBFORGE_VERSION` is now `LEDGER_VERSION`.
+- **Theme/preference storage keys renamed.** Your theme preference and other client-side preferences will reset once on upgrade.
+
+### Migration
+
+For most users, the rename requires only:
+1. Move `C:\xampp\htdocs\dbforge\` to `C:\xampp\htdocs\ledger\` (or extract the new zip there)
+2. Update any bookmarks pointing at `/dbforge/` to `/ledger/`
+3. Log in once after upgrade
+
+Database connection settings, saved queries, ER diagram layouts, and query history are preserved (these live in `logs/` which is unchanged).
+
+---
+
+## [1.8.1-alpha] — 2026-04-22
+
+> ER diagram reset button, export mode selector (structure / data / both), and bugfix for stale ER schema after table changes.
+
+### New Features
+
+- **ER diagram Reset.** New red "Reset" button in the ER diagram toolbar deletes the saved layout file for the current database and rebuilds the diagram with auto-layout from the live schema. Useful when the saved layout has drifted from the current schema or when you want to start over.
+- **Export modes.** Table and database SQL exports now have a "Structure + data / Structure only / Data only" selector on the export page. Filenames reflect the mode (`orders.structure.sql`, `mydb.data.sql`). The SQL dump header includes the chosen mode for clarity on re-import.
+
+### Fixed
+
+- **ER diagram stale schema** — When tables or columns were added or removed, the ER diagram panel continued showing the previous schema state because the browser was caching the `er_data` AJAX response. The diagram now always reflects current schema. (Fix affects all AJAX endpoints — `get_tables`, `processlist`, `get_events`, etc. all now return no-cache headers.)
+
+### Internal
+
+- Added `Cache-Control: no-store, no-cache, must-revalidate` and `Pragma: no-cache` headers to `ajax.php`. All 70+ AJAX endpoints now guarantee fresh data.
+- Added cache-buster query parameter (`&_=<timestamp>`) to ER diagram fetch URLs as a belt-and-braces measure against CDN/proxy caching.
+- `Database::exportTable()` gains a third optional `$mode` parameter (`'full'` | `'structure'` | `'data'`). Default is `'full'` for backward compatibility.
+- New `er_reset_layout` AJAX endpoint with CSRF + read-only guard.
 
 ---
 
@@ -18,7 +69,7 @@ All notable changes to [DBForge](https://github.com/ClearanceClarence/DBForge) a
 - **Header stats** — Total, Active, Sleeping, Longest-running. Update on every refresh.
 - **Auto-refresh** — Off / 2s / 5s / 10s selector. Scroll position preserved across refreshes. Pulse indicator in the header while a fetch is in flight. Timer cleared automatically on page navigation.
 - **Filter** — text filter across user, host, database, query, and state. "Hide sleeping" checkbox to cut through noise on quiet servers.
-- **Current connection marker** — a green star next to the row representing your DBForge session (matched against `CONNECTION_ID()`). Its Kill button is disabled to prevent self-termination.
+- **Current connection marker** — a green star next to the row representing your Ledger session (matched against `CONNECTION_ID()`). Its Kill button is disabled to prevent self-termination.
 - **Kill button** — red danger-styled button per row with a themed confirm modal that shows the current query being killed. Disabled in read-only mode. Backend also refuses to kill the current session even if the request is forged.
 
 ### Query History
@@ -32,7 +83,7 @@ All notable changes to [DBForge](https://github.com/ClearanceClarence/DBForge) a
 
 ### Fixes
 
-- **Version string was read from `config.php`, which is generated once at install and never updated.** This meant the UI always showed the version you first installed, not the version you were running — upgrades appeared to do nothing. Moved version to a `DBFORGE_VERSION` constant at the top of `index.php` (single source of truth, updated in lockstep with the code) and removed the now-unused `version` key from `config.template.php`. Existing installs pick up the real version automatically after copying the new files.
+- **Version string was read from `config.php`, which is generated once at install and never updated.** This meant the UI always showed the version you first installed, not the version you were running — upgrades appeared to do nothing. Moved version to a `LEDGER_VERSION` constant at the top of `index.php` (single source of truth, updated in lockstep with the code) and removed the now-unused `version` key from `config.template.php`. Existing installs pick up the real version automatically after copying the new files.
 - **Events: Drop, Edit, and Enable/Disable buttons failed with "Database and name required."** Three AJAX calls in `templates/structure.php` (`drop_event` twice, `toggle_event_status` once) were missing `fd.append('db', db)`. The backend requires an explicit database parameter for these actions — the events panel is rendered under a specific database, but the click handlers weren't forwarding it. Fixed.
 
 ### Backend
@@ -70,7 +121,7 @@ All notable changes to [DBForge](https://github.com/ClearanceClarence/DBForge) a
 - **Routines CRUD** — list stored procedures and functions with type badges (PROC/FUNC), parameters, return types, definer, modified date. View definitions with syntax highlighting + copy button. Create with skeleton templates. Edit (drop+recreate). Drop with confirmation.
 - **Partitions management** — create partitioning (RANGE, LIST, HASH, KEY, RANGE COLUMNS, LIST COLUMNS), add partitions, drop/truncate/optimize/rebuild individual partitions, remove all partitioning. Full UI with per-partition action buttons.
 - **Maintenance panel** — Optimize, Analyze, Check, Repair table in one panel with descriptions and Run buttons. Inline status feedback.
-- **Docker support** — `Dockerfile` (PHP 8.2 + Apache), `docker-compose.yml` (DBForge + MySQL 8.0 with healthcheck), `DOCKER.md` quick start guide. Three named volumes for persistence.
+- **Docker support** — `Dockerfile` (PHP 8.2 + Apache), `docker-compose.yml` (Ledger + MySQL 8.0 with healthcheck), `DOCKER.md` quick start guide. Three named volumes for persistence.
 
 ### Themes
 
@@ -91,9 +142,12 @@ All notable changes to [DBForge](https://github.com/ClearanceClarence/DBForge) a
 
 ### Code Quality
 
+- Removed all decorative Unicode comment headers (══, ──, ★).
+- Removed ASCII art box from index.php.
+- Removed ~60 trivial docblocks that restated function names.
 - Trimmed verbose file headers.
-- Converted all IIFE `(function(){})()` blocks to `DOMContentLoaded` to prevent `DBForge is not defined` errors.
-- Replaced `DBForge.getCsrfToken()` calls in templates with direct meta tag reads.
+- Converted all IIFE `(function(){})()` blocks to `DOMContentLoaded` to prevent `Ledger is not defined` errors.
+- Replaced `Ledger.getCsrfToken()` calls in templates with direct meta tag reads.
 
 ### Backend
 
@@ -103,13 +157,13 @@ All notable changes to [DBForge](https://github.com/ClearanceClarence/DBForge) a
 
 ### Fixes
 
-- IIFE scripts in operations.php, browse.php, sql.php, structure.php caused `DBForge is not defined` errors — all converted to DOMContentLoaded.
+- IIFE scripts in operations.php, browse.php, sql.php, structure.php caused `Ledger is not defined` errors — all converted to DOMContentLoaded.
 - Orphaned `*/` in TOTP.php after docblock cleanup caused fatal syntax error.
 - Old Optimize button in Space Usage panel was orphaned (no handler) — removed.
 - Duplicate Partitions panel (old read-only + new interactive) — merged into one.
 - Maintenance icon showed `?` (tool icon didn't exist) — changed to settings gear.
 - Saved queries script leaked EXPLAIN JS as visible text (missing `<script>` tag boundary).
-- Save query button did nothing — script ran before DBForge loaded (IIFE → DOMContentLoaded).
+- Save query button did nothing — script ran before Ledger loaded (IIFE → DOMContentLoaded).
 
 ### Credits
 
@@ -143,7 +197,7 @@ All notable changes to [DBForge](https://github.com/ClearanceClarence/DBForge) a
 - **Danger buttons** — solid red fill with white text everywhere. Hover deepens + adds glow.
 - **Danger zone** — red border, hatched header, warning ⚠ on each row title, red hover, solid red action buttons.
 - **SQL preview on import** — syntax-highlighted preview after selecting a `.sql` file. Line count, statement count, collapsible.
-- **Syntax highlighting in modals** — view create/edit and trigger create/edit textareas have live syntax highlighting via `DBForge.attachHighlighter()`.
+- **Syntax highlighting in modals** — view create/edit and trigger create/edit textareas have live syntax highlighting via `Ledger.attachHighlighter()`.
 - **Column types hidden by default**, **zebra striping**, **pill tabs**, **keyboard shortcut overlay** (`?`), **empty table state** with Insert Row button.
 
 ### Structure Tab Additions
@@ -290,7 +344,7 @@ All notable changes to [DBForge](https://github.com/ClearanceClarence/DBForge) a
 - Home (server overview), Info (grouped sections + danger zone), Server (performance stats), Export (cards with sizes).
 
 ### Icons & Modals
-- 30+ inline SVG icons. Custom `DBForge.confirm()` / `DBForge.alert()` replacing native dialogs.
+- 30+ inline SVG icons. Custom `Ledger.confirm()` / `Ledger.alert()` replacing native dialogs.
 
 ---
 

@@ -1,14 +1,14 @@
 # Docker Quick Start
 
-Run DBForge with MySQL in one command:
+Run Ledger with MySQL in one command:
 
 ```bash
-git clone https://github.com/ClearanceClarence/DBForge.git
-cd DBForge
+git clone https://github.com/ClearanceClarence/Ledger.git
+cd Ledger
 docker-compose up -d
 ```
 
-Open **http://localhost:8080/dbforge/** in your browser.
+Open **http://localhost:8080/ledger/** in your browser.
 
 ## Installer Settings
 
@@ -19,7 +19,7 @@ When the installer asks for database credentials, use:
 | Host     | `db`               |
 | Port     | `3306`             |
 | Username | `root`             |
-| Password | `dbforge_root_pass`|
+| Password | `ledger_root_pass`|
 
 Or use the non-root user:
 
@@ -27,20 +27,20 @@ Or use the non-root user:
 |:---------|:---------------|
 | Host     | `db`           |
 | Port     | `3306`         |
-| Username | `dbforge`      |
-| Password | `dbforge_pass` |
+| Username | `ledger`      |
+| Password | `ledger_pass` |
 
 ## Ports
 
-- **8080** → DBForge web interface
+- **8080** → Ledger web interface
 - **3307** → MySQL (for external tools like MySQL Workbench)
 
 ## Persistence
 
 Data persists across restarts via Docker volumes:
 - `mysql-data` — database files
-- `dbforge-config` — your config.php
-- `dbforge-logs` — query logs, favorites, saved queries, ER layouts
+- `ledger-config` — your config.php
+- `ledger-logs` — query logs, favorites, saved queries, ER layouts
 
 ## Commands
 
@@ -52,7 +52,7 @@ docker-compose up -d
 docker-compose down
 
 # View logs
-docker-compose logs -f dbforge
+docker-compose logs -f ledger
 
 # Rebuild after updating
 docker-compose build --no-cache
@@ -68,4 +68,4 @@ Edit `docker-compose.yml` and change `MYSQL_ROOT_PASSWORD`, `MYSQL_USER`, and `M
 
 ## Connecting to an External Database
 
-If you already have MySQL/MariaDB running elsewhere, you don't need the `db` service. Use only the `dbforge` service and point the installer at your existing database host.
+If you already have MySQL/MariaDB running elsewhere, you don't need the `db` service. Use only the `ledger` service and point the installer at your existing database host.

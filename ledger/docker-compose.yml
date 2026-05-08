@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  ledger:
+    build: .
+    ports:
+      - "8080:80"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - APACHE_DOCUMENT_ROOT=/var/www/html
+    volumes:
+      # Persist config and logs across restarts
+      - ledger-config:/var/www/html/ledger/config.php
+      - ledger-logs:/var/www/html/ledger/logs
+    restart: unless-stopped
+
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ledger_root_pass
+      MYSQL_DATABASE: demo
+      MYSQL_USER: ledger
+      MYSQL_PASSWORD: ledger_pass
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pledger_root_pass"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  mysql-data:
+  ledger-config:
+  ledger-logs:

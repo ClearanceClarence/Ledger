@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 64 64" fill="none" role="img" aria-label="Ledger">
+  <title>Ledger</title>
+  <path d="M14 8H6v48h8" stroke="#16a34a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M50 8h8v48h-8" stroke="#16a34a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="18" y="22" width="28" height="4.5" rx="1.25" fill="#16a34a"/>
+  <rect x="18" y="32" width="22" height="4.5" rx="1.25" fill="#16a34a" opacity="0.7"/>
+  <rect x="18" y="42" width="28" height="4.5" rx="1.25" fill="#16a34a" opacity="0.45"/>
+</svg>

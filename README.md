@@ -1,6 +1,8 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ClearanceClarence/DBForge/refs/heads/main/dbforge/assets/logo.svg" alt="DBForge" width="520">
+  <img src="https://raw.githubusercontent.com/ClearanceClarence/Ledger/refs/heads/main/ledger/assets/logo.svg" alt="Ledger" width="80">
 </p>
+
+<h1 align="center">Ledger</h1>
 
 <p align="center">
   <strong>The database tool phpMyAdmin should have been.</strong>
@@ -22,7 +24,7 @@
 <br>
 
 <p align="center">
-  <a href="#-why-dbforge">Why DBForge?</a> · 
+  <a href="#-why-ledger">Why Ledger?</a> · 
   <a href="#-get-started">Get Started</a> · 
   <a href="#-docker">Docker</a> · 
   <a href="#-sql-editor">SQL Editor</a> · 
@@ -41,13 +43,13 @@
 
 ---
 
-## 💡 Why DBForge?
+## 💡 Why Ledger?
 
 phpMyAdmin ships with every shared host and XAMPP stack on the planet, but its interface hasn't meaningfully changed since 2003. The SQL editor is a `<textarea>` with coloring. Editing a row reloads the entire page. Searching means opening each table one by one. There's no way to visualize relationships. No query history. The security defaults are weak enough that the official docs tell you to restrict access at the web server level.
 
-DBForge is a ground-up replacement that keeps the one thing phpMyAdmin gets right — drop a folder, open a browser, manage your databases — and fixes everything else.
+Ledger is a ground-up replacement that keeps the one thing phpMyAdmin gets right — drop a folder, open a browser, manage your databases — and fixes everything else.
 
-| | phpMyAdmin | DBForge |
+| | phpMyAdmin | Ledger |
 |:-|:-----------|:--------|
 | **Install** | Download, extract, edit `config.inc.php`, set blowfish secret | Drop folder → open browser → 3-step visual wizard |
 | **SQL Editor** | Textarea with syntax coloring | Custom tokenizer (612 tokens), context-aware autocomplete, EXPLAIN visualizer |
@@ -68,7 +70,7 @@ DBForge is a ground-up replacement that keeps the one thing phpMyAdmin gets righ
 | **Import** | Standard form | Drag-and-drop SQL/CSV with syntax-highlighted preview |
 | **Auth** | HTTP Basic or cookie-based with manual config | Bcrypt + optional TOTP 2FA, brute force lockout, CSRF, IP whitelist |
 | **Themes** | 3 color schemes | 20 polished themes (10 light, 10 dark) + custom theme API + per-zone font control |
-| **Docker** | Not included | `docker-compose up` — DBForge + MySQL running in seconds |
+| **Docker** | Not included | `docker-compose up` — Ledger + MySQL running in seconds |
 | **Dependencies** | Requires Composer on v5.2+ | Zero. Pure PHP + vanilla JS. Entire codebase is in the repo |
 
 ---
@@ -76,14 +78,14 @@ DBForge is a ground-up replacement that keeps the one thing phpMyAdmin gets righ
 ## 🚀 Get Started
 
 ```bash
-git clone https://github.com/ClearanceClarence/DBForge.git
+git clone https://github.com/ClearanceClarence/Ledger.git
 ```
 
-Copy the `dbforge/` folder into your web root (`htdocs/`, `www/`, `public_html/`) and open it in a browser.
+Copy the `ledger/` folder into your web root (`htdocs/`, `www/`, `public_html/`) and open it in a browser.
 
 The **first-run installer** walks you through three steps:
 
-1. **Database connection** — enter host, port, username, password. DBForge tests the connection before proceeding. If it fails, you see the exact PDO error with suggestions.
+1. **Database connection** — enter host, port, username, password. Ledger tests the connection before proceeding. If it fails, you see the exact PDO error with suggestions.
 2. **Admin account** — choose a username and password. Passwords are bcrypt-hashed immediately. Minimum 6 characters. Common passwords like `password`, `123456`, `admin` are rejected. No default credentials are ever written to disk.
 3. **Done** — `config.php` is generated and you're redirected to the login page.
 
@@ -93,15 +95,15 @@ Works out of the box with **XAMPP**, **WAMP**, **MAMP**, **Laragon**, **DDEV**, 
 
 ## 🐳 Docker
 
-Run DBForge with MySQL in one command:
+Run Ledger with MySQL in one command:
 
 ```bash
-git clone https://github.com/ClearanceClarence/DBForge.git
-cd DBForge
+git clone https://github.com/ClearanceClarence/Ledger.git
+cd Ledger
 docker-compose up -d
 ```
 
-Open `http://localhost:8080/dbforge/` and use host `db`, password `dbforge_root_pass` in the installer. MySQL is exposed on port `3307` for external tools. Three named volumes persist data across restarts. See [DOCKER.md](DOCKER.md) for full details.
+Open `http://localhost:8080/ledger/` and use host `db`, password `ledger_root_pass` in the installer. MySQL is exposed on port `3307` for external tools. Three named volumes persist data across restarts. See [DOCKER.md](DOCKER.md) for full details.
 
 ---
 
@@ -210,7 +212,7 @@ Empty tables show a centered icon, "This table is empty" title, the table name, 
 
 The feature phpMyAdmin doesn't have.
 
-Open the **Search tab** (available when a database is selected), type any value, and DBForge scans every table in the database:
+Open the **Search tab** (available when a database is selected), type any value, and Ledger scans every table in the database:
 
 1. Gets all tables via `SHOW TABLE STATUS`
 2. For each table, gets columns via `SHOW FULL COLUMNS`
@@ -312,14 +314,14 @@ Save frequently-used queries with a name for quick access later. Click the **Sav
 
 ## ⚡ Processes
 
-Live view of `SHOW FULL PROCESSLIST` from a dedicated top-level tab. Turns DBForge from a schema editor into a tool you keep open to watch what's happening on your server.
+Live view of `SHOW FULL PROCESSLIST` from a dedicated top-level tab. Turns Ledger from a schema editor into a tool you keep open to watch what's happening on your server.
 
 - **Header stats** — Total connections, Active (non-Sleep), Sleeping, and the duration of the longest-running query. All refresh live.
 - **Color-coded commands** — Sleep is muted, Query is green, Connect is blue, Killed is red, Binlog Dump is purple, everything else is gold. At a glance you see where attention is needed.
 - **Color-scaled time** — query duration turns gold at 3s, amber at 10s, red at 60s. Sleeping connections stay dim regardless of how long they've been idle.
 - **Auto-refresh** — Off (default), 2s, 5s, or 10s. Filter and scroll position are preserved across refreshes. A pulsing indicator shows when a fetch is in flight.
 - **Filter** — live text filter across user, host, database, state, and the full query text. Plus a "Hide sleeping" checkbox that cuts through the noise on quiet servers where 90% of connections are idle.
-- **Current session marker** — a green star next to the row representing your own DBForge connection (matched against `CONNECTION_ID()`). Self-kill is blocked in the UI *and* enforced server-side.
+- **Current session marker** — a green star next to the row representing your own Ledger connection (matched against `CONNECTION_ID()`). Self-kill is blocked in the UI *and* enforced server-side.
 - **Kill button** — red danger action with a confirm modal that shows the query being terminated so you don't kill the wrong thing. Disabled in read-only mode.
 
 Requires the `PROCESS` privilege to see other users' threads, and `SUPER` or `CONNECTION_ADMIN` to kill them. With a plain user, you'll see only your own sessions.
@@ -461,7 +463,7 @@ All file uploads support **drag-and-drop** with visual hover feedback.
 
 ## 🔒 Security & 2FA
 
-Not bolted on. DBForge ships with a 12-step security chain — all opt-in so local dev stays frictionless, but production stays locked down.
+Not bolted on. Ledger ships with a 12-step security chain — all opt-in so local dev stays frictionless, but production stays locked down.
 
 | # | Layer | What It Does |
 |:--|:------|:-------------|
@@ -588,14 +590,14 @@ Press `?` anywhere (except when typing in an input) to open the shortcut overlay
 ## 📁 Project Structure
 
 ```
-dbforge/
+ledger/
 ├── index.php                    # Router + security chain
 ├── config.template.php          # Template for installer
 ├── install.php                  # 3-step first-run wizard
 ├── ajax.php                     # All AJAX endpoints (auth + CSRF protected)
 ├── .htaccess                    # Apache security rules
 ├── Dockerfile                   # PHP 8.2 + Apache image
-├── docker-compose.yml           # DBForge + MySQL 8.0
+├── docker-compose.yml           # Ledger + MySQL 8.0
 ├── DOCKER.md                    # Docker quick start guide
 ├── assets/
 │   └── logo.svg
@@ -636,7 +638,7 @@ dbforge/
 │   ├── settings_save.php        # Settings save helper (PRG)
 │   └── connection_error.php     # Error display
 ├── js/
-│   ├── dbforge.js               # Tokenizer (612 tokens), autocomplete,
+│   ├── ledger.js               # Tokenizer (612 tokens), autocomplete,
 │   │                            # inline edit, bulk select, modals, CSRF,
 │   │                            # favorites, sidebar filter, persistent drafts,
 │   │                            # mini-editor highlighter, shortcut overlay
@@ -667,7 +669,7 @@ PDO MySQL extension required (`php-pdo` + `php-mysql`). Sessions must be enabled
 
 1. Fork → branch → commit → PR
 2. **Theme contributions** especially welcome — add a `themes/your-theme/` folder
-3. Bug reports and feature requests via [Issues](https://github.com/ClearanceClarence/DBForge/issues)
+3. Bug reports and feature requests via [Issues](https://github.com/ClearanceClarence/Ledger/issues)
 
 ---
 
@@ -682,7 +684,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 ---
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ClearanceClarence/DBForge/main/assets/logo.svg" alt="DBForge" width="320">
+  <img src="https://raw.githubusercontent.com/ClearanceClarence/Ledger/main/assets/logo.svg" alt="Ledger" width="28">
   <br>
   <sub>Built with PHP, vanilla JS, and zero external dependencies.</sub>
   <br>
