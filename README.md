@@ -2,8 +2,6 @@
   <img src="https://raw.githubusercontent.com/ClearanceClarence/Ledger/refs/heads/main/ledger/assets/logo.svg" alt="Ledger" width="540">
 </p>
 
-<h1 align="center">Ledger</h1>
-
 <p align="center">
   <strong>The database tool phpMyAdmin should have been.</strong>
 </p>
