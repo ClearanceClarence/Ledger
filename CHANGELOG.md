@@ -8,6 +8,31 @@ All notable changes to [Ledger](https://github.com/ClearanceClarence/Ledger) are
 
 ---
 
+## [1.8.3] — 2026-05-11
+
+> Multi-statement SQL support. Paste a migration, hit Run, get per-statement results. USE, CREATE DATABASE, and DROP DATABASE all work in the editor.
+
+### New Features
+
+- **Multi-statement execution in the SQL editor.** Paste a full migration with multiple `CREATE TABLE`, `INSERT`, `ALTER` statements separated by semicolons and run them all in one go. Each statement is executed sequentially and its result is shown in its own card with row counts, errors, and timing. Execution stops on the first failure (use `START TRANSACTION` / `COMMIT` if you need atomicity).
+- **DELIMITER directive support.** The splitter handles `DELIMITER //` blocks correctly, so you can paste stored procedure definitions with `BEGIN ... END//` bodies without breaking the parse.
+- **USE works in the SQL editor.** Paste `USE mydb; CREATE TABLE foo (...); INSERT INTO foo ...` and it executes correctly. Previously the second and third statements ran against the wrong database because each statement reconnected and lost the USE context.
+- **Bootstrapping scripts work.** Paste `CREATE DATABASE new; USE new; CREATE TABLE t (...);` and it runs end-to-end. Previously the initial connection to `new` failed because the database didn't exist yet.
+
+### Fixed
+
+- **Multi-statement read-only enforcement.** `isWriteQuery()` previously only checked the first keyword in the input, so a read-only user pasting `USE foo; DROP TABLE bar;` would have the DROP slip through. Now every statement in the batch is checked.
+
+### Internal
+
+- New `Database::executeQueries()` method routes single statements through the existing fast path (backward-compatible) and multi-statement input through a per-statement loop with aggregated results. Connects once and reuses one PDO across all statements in the batch, preserving session state (active database, temp tables, user variables).
+- New `Database::splitSqlStatements()` public method handles all the cases the previous private splitter missed: backtick-quoted identifiers, doubled-quote string escapes (`'it''s'`), hash comments (`#`), DELIMITER directives, and pure-comment lines. The old private splitter is removed; the existing `executeSqlDump` importer transparently uses the new one.
+- When input contains `CREATE DATABASE`, `DROP DATABASE`, or `USE`, the batch connects without a target database to avoid "unknown database" errors at connect time. If the original URL had a database set, a `USE` is issued after connect to restore intended context.
+- `USE`, `CREATE/DROP DATABASE`, `CREATE/DROP SCHEMA`, and `SET` now route through `PDO::exec()` instead of `prepare() + execute()`. PHP-PDO mishandles prepared `USE` on some MySQL versions and these statements don't benefit from prepared-statement caching anyway.
+- Added `WITH` (CTE) to the SELECT detector so CTEs are recognized as resultset queries.
+
+---
+
 ## [1.8.2] — 2026-05-08
 
 > Rebrand: DBForge is now Ledger. Complete identity overhaul with new logo and naming.

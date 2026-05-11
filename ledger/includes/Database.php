@@ -661,17 +661,40 @@ class Database
     {
         $pdo = $this->connect($database);
         $start = microtime(true);
+        $trimmed = trim($sql);
+        $upper = strtoupper($trimmed);
 
         try {
+            // Session/DDL statements that should bypass prepare() —
+            // PHP-PDO mishandles prepared USE on some MySQL versions, and
+            // these statements don't need parameter binding anyway.
+            $isSessionStatement = str_starts_with($upper, 'USE ')
+                || str_starts_with($upper, 'CREATE DATABASE')
+                || str_starts_with($upper, 'CREATE SCHEMA')
+                || str_starts_with($upper, 'DROP DATABASE')
+                || str_starts_with($upper, 'DROP SCHEMA')
+                || str_starts_with($upper, 'SET ');
+
+            if ($isSessionStatement) {
+                $pdo->exec($sql);
+                return [
+                    'success'  => true,
+                    'type'     => 'modify',
+                    'affected' => 0,
+                    'time'     => round(microtime(true) - $start, 4),
+                ];
+            }
+
             $stmt = $pdo->prepare($sql);
             $stmt->execute();
             $elapsed = microtime(true) - $start;
 
-            $isSelect = stripos(trim($sql), 'SELECT') === 0
-                || stripos(trim($sql), 'SHOW') === 0
-                || stripos(trim($sql), 'DESCRIBE') === 0
-                || stripos(trim($sql), 'DESC ') === 0
-                || stripos(trim($sql), 'EXPLAIN') === 0;
+            $isSelect = str_starts_with($upper, 'SELECT')
+                || str_starts_with($upper, 'SHOW')
+                || str_starts_with($upper, 'DESCRIBE')
+                || str_starts_with($upper, 'DESC ')
+                || str_starts_with($upper, 'EXPLAIN')
+                || str_starts_with($upper, 'WITH ');  // CTEs
 
             if ($isSelect) {
                 $rows = $stmt->fetchAll();
@@ -711,6 +734,355 @@ class Database
                 'time'    => round($elapsed, 4),
             ];
         }
+    }
+
+    /**
+     * Execute one or more SQL statements separated by semicolons.
+     *
+     * Splits input on top-level semicolons (respecting strings, backticks,
+     * line/block comments, and DELIMITER directives), then runs each statement
+     * through executeQuery() and aggregates the results.
+     *
+     * Returns:
+     *   - Single statement: same shape as executeQuery() (backward-compatible).
+     *   - Multiple statements: ['multi' => true, 'statements' => [...], 'time' => total,
+     *                          'success' => bool, 'executed' => N, 'failed_at' => idx|null]
+     *     Each entry in 'statements' is the per-statement executeQuery() result with
+     *     'sql' (the statement text) prepended.
+     *
+     * Execution stops on the first error. Successful prior statements remain executed
+     * (no transaction wrapping — that's the caller's responsibility via BEGIN/COMMIT).
+     */
+    public function executeQueries(string $database, string $sql): array
+    {
+        $statements = $this->splitSqlStatements($sql);
+
+        // Fast path: only one statement → keep the original shape.
+        if (count($statements) <= 1) {
+            return $this->executeQuery($database, $statements[0] ?? $sql);
+        }
+
+        $start = microtime(true);
+        $results = [];
+        $allSuccess = true;
+        $failedAt = null;
+
+        // If any statement is CREATE DATABASE or USE, the user is doing schema
+        // bootstrapping. Connect WITHOUT a target database so the connection
+        // succeeds even when the named DB doesn't exist yet. Subsequent USE
+        // statements in the batch will switch context as needed.
+        $needsRootConnect = false;
+        foreach ($statements as $stmt) {
+            $upper = strtoupper(ltrim($stmt));
+            if (str_starts_with($upper, 'CREATE DATABASE')
+                || str_starts_with($upper, 'CREATE SCHEMA')
+                || str_starts_with($upper, 'USE ')
+                || str_starts_with($upper, 'DROP DATABASE')
+                || str_starts_with($upper, 'DROP SCHEMA')) {
+                $needsRootConnect = true;
+                break;
+            }
+        }
+
+        // Single shared connection across all statements
+        try {
+            $pdo = $this->connect($needsRootConnect ? null : ($database ?: null));
+            // If we connected without a database but the URL had one, USE it
+            // first so initial statements that don't specify a db still target
+            // the intended one.
+            if ($needsRootConnect && $database) {
+                try { $pdo->exec('USE `' . $this->escapeIdentifier($database) . '`'); }
+                catch (PDOException $e) { /* DB doesn't exist yet — user is creating it */ }
+            }
+        } catch (PDOException $e) {
+            return [
+                'multi'      => true,
+                'success'    => false,
+                'statements' => [['success' => false, 'error' => $e->getMessage(), 'sql' => $statements[0] ?? '', 'time' => 0]],
+                'executed'   => 0,
+                'total'      => count($statements),
+                'failed_at'  => 0,
+                'time'       => round(microtime(true) - $start, 4),
+            ];
+        }
+
+        foreach ($statements as $idx => $stmt) {
+            $result = $this->executeStatementOnConnection($pdo, $stmt);
+            $result['sql'] = $stmt;
+            $results[] = $result;
+            if (!($result['success'] ?? false)) {
+                $allSuccess = false;
+                $failedAt = $idx;
+                break;
+            }
+        }
+
+        return [
+            'multi'      => true,
+            'success'    => $allSuccess,
+            'statements' => $results,
+            'executed'   => count($results),
+            'total'      => count($statements),
+            'failed_at'  => $failedAt,
+            'time'       => round(microtime(true) - $start, 4),
+        ];
+    }
+
+    /**
+     * Run a single statement against an existing PDO connection.
+     * Used by executeQueries() to preserve session state (active database,
+     * temp tables, user variables) across statements in a batch.
+     *
+     * Routes USE / CREATE DATABASE / DROP DATABASE through exec() instead of
+     * prepare() since those are session-management statements and PHP-PDO
+     * mishandles prepared USE on some MySQL versions.
+     *
+     * @internal
+     */
+    private function executeStatementOnConnection(PDO $pdo, string $sql): array
+    {
+        $start = microtime(true);
+        $trimmed = trim($sql);
+        $upper = strtoupper($trimmed);
+
+        try {
+            // Session/DDL statements that should go through exec()
+            $isSessionStatement = str_starts_with($upper, 'USE ')
+                || str_starts_with($upper, 'CREATE DATABASE')
+                || str_starts_with($upper, 'CREATE SCHEMA')
+                || str_starts_with($upper, 'DROP DATABASE')
+                || str_starts_with($upper, 'DROP SCHEMA')
+                || str_starts_with($upper, 'SET ');
+
+            if ($isSessionStatement) {
+                $pdo->exec($sql);
+                return [
+                    'success'  => true,
+                    'type'     => 'modify',
+                    'affected' => 0,
+                    'time'     => round(microtime(true) - $start, 4),
+                ];
+            }
+
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute();
+            $elapsed = microtime(true) - $start;
+
+            $isSelect = str_starts_with($upper, 'SELECT')
+                || str_starts_with($upper, 'SHOW')
+                || str_starts_with($upper, 'DESCRIBE')
+                || str_starts_with($upper, 'DESC ')
+                || str_starts_with($upper, 'EXPLAIN')
+                || str_starts_with($upper, 'WITH ');  // CTEs
+
+            if ($isSelect) {
+                $rows = $stmt->fetchAll();
+                $columns = [];
+                if (!empty($rows)) {
+                    $columns = array_keys($rows[0]);
+                } else {
+                    $colCount = $stmt->columnCount();
+                    for ($i = 0; $i < $colCount; $i++) {
+                        $meta = $stmt->getColumnMeta($i);
+                        $columns[] = $meta['name'];
+                    }
+                }
+                return [
+                    'success'  => true,
+                    'type'     => 'select',
+                    'columns'  => $columns,
+                    'rows'     => $rows,
+                    'count'    => count($rows),
+                    'time'     => round($elapsed, 4),
+                ];
+            }
+
+            return [
+                'success'  => true,
+                'type'     => 'modify',
+                'affected' => $stmt->rowCount(),
+                'time'     => round($elapsed, 4),
+            ];
+        } catch (PDOException $e) {
+            return [
+                'success' => false,
+                'error'   => $e->getMessage(),
+                'code'    => $e->getCode(),
+                'time'    => round(microtime(true) - $start, 4),
+            ];
+        }
+    }
+
+    /**
+     * Split a multi-statement SQL string into individual statements.
+     *
+     * Handles:
+     *   - Single and double-quoted strings (with backslash escapes and doubled quotes)
+     *   - Backtick-quoted identifiers
+     *   - Line comments (-- and #)
+     *   - Block comments (slash-star to star-slash, including MySQL conditional /*! ... *\/)
+     *   - DELIMITER directives (changes the statement terminator inside the input)
+     *
+     * Returns an array of trimmed, non-empty statements with their delimiters stripped.
+     * Statements that consist only of whitespace and comments are dropped.
+     */
+    public function splitSqlStatements(string $sql): array
+    {
+        $statements = [];
+        $current = '';
+        $delimiter = ';';
+        $len = strlen($sql);
+        $i = 0;
+
+        while ($i < $len) {
+            // Check for DELIMITER directive at start of line (whitespace-only before it)
+            if ($this->isDelimiterDirectiveHere($sql, $i)) {
+                $endOfLine = strpos($sql, "\n", $i);
+                $line = $endOfLine === false ? substr($sql, $i) : substr($sql, $i, $endOfLine - $i);
+                $newDelim = trim(preg_replace('/^DELIMITER\s+/i', '', $line));
+                if ($newDelim !== '') {
+                    // Flush any pending statement before changing delimiter
+                    $trimmed = trim($current);
+                    if ($trimmed !== '') {
+                        $statements[] = $trimmed;
+                    }
+                    $current = '';
+                    $delimiter = $newDelim;
+                }
+                $i = $endOfLine === false ? $len : $endOfLine + 1;
+                continue;
+            }
+
+            $c = $sql[$i];
+            $next = $i + 1 < $len ? $sql[$i + 1] : '';
+
+            // Line comments
+            if ($c === '-' && $next === '-' && ($i + 2 >= $len || ctype_space($sql[$i + 2]) || $sql[$i + 2] === "\n")) {
+                $eol = strpos($sql, "\n", $i);
+                $end = $eol === false ? $len : $eol;
+                $current .= substr($sql, $i, $end - $i);
+                $i = $end;
+                continue;
+            }
+            if ($c === '#') {
+                $eol = strpos($sql, "\n", $i);
+                $end = $eol === false ? $len : $eol;
+                $current .= substr($sql, $i, $end - $i);
+                $i = $end;
+                continue;
+            }
+
+            // Block comments
+            if ($c === '/' && $next === '*') {
+                $closeAt = strpos($sql, '*/', $i + 2);
+                $end = $closeAt === false ? $len : $closeAt + 2;
+                $current .= substr($sql, $i, $end - $i);
+                $i = $end;
+                continue;
+            }
+
+            // Strings (single, double, backtick) — preserve verbatim
+            if ($c === "'" || $c === '"' || $c === '`') {
+                $quote = $c;
+                $current .= $c;
+                $i++;
+                while ($i < $len) {
+                    $ch = $sql[$i];
+                    $current .= $ch;
+                    if ($ch === '\\' && $i + 1 < $len) {
+                        // Escaped char — preserve the next byte literally
+                        $current .= $sql[$i + 1];
+                        $i += 2;
+                        continue;
+                    }
+                    if ($ch === $quote) {
+                        // Check for doubled quote (escape via duplication)
+                        if ($i + 1 < $len && $sql[$i + 1] === $quote) {
+                            $current .= $sql[$i + 1];
+                            $i += 2;
+                            continue;
+                        }
+                        $i++;
+                        break;
+                    }
+                    $i++;
+                }
+                continue;
+            }
+
+            // Delimiter match (substring at i)
+            if ($this->matchesDelimiter($sql, $i, $delimiter)) {
+                $trimmed = trim($current);
+                if ($trimmed !== '') {
+                    $statements[] = $trimmed;
+                }
+                $current = '';
+                $i += strlen($delimiter);
+                continue;
+            }
+
+            $current .= $c;
+            $i++;
+        }
+
+        // Tail (any statement without trailing delimiter)
+        $trimmed = trim($current);
+        if ($trimmed !== '') {
+            $statements[] = $trimmed;
+        }
+
+        // Drop entries that are only comments and whitespace
+        $statements = array_values(array_filter($statements, function ($s) {
+            return !$this->isOnlyCommentsAndWhitespace($s);
+        }));
+
+        return $statements;
+    }
+
+    /**
+     * True if the given SQL fragment contains only whitespace, line comments,
+     * and block comments — no actual statement text.
+     *
+     * @internal
+     */
+    private function isOnlyCommentsAndWhitespace(string $s): bool
+    {
+        // Strip line comments
+        $s = preg_replace('/--[^\n]*/', '', $s);
+        $s = preg_replace('/#[^\n]*/', '', $s);
+        // Strip block comments
+        $s = preg_replace('/\/\*.*?\*\//s', '', $s);
+        return trim($s) === '';
+    }
+
+    /**
+     * Whether $sql at offset $i (after any leading whitespace on the line)
+     * starts a "DELIMITER " directive.
+     *
+     * @internal
+     */
+    private function isDelimiterDirectiveHere(string $sql, int $i): bool
+    {
+        // Must be at start-of-line (preceded by \n, or at offset 0, or only whitespace on this line)
+        $lineStart = $i;
+        while ($lineStart > 0 && $sql[$lineStart - 1] !== "\n") {
+            if (!ctype_space($sql[$lineStart - 1])) return false;
+            $lineStart--;
+        }
+        // Must have "DELIMITER " (case-insensitive) followed by something
+        return (bool)preg_match('/^DELIMITER\s+\S/i', substr($sql, $i, 40));
+    }
+
+    /**
+     * Whether $sql at offset $i matches the delimiter string.
+     *
+     * @internal
+     */
+    private function matchesDelimiter(string $sql, int $i, string $delim): bool
+    {
+        $dl = strlen($delim);
+        if ($i + $dl > strlen($sql)) return false;
+        return substr($sql, $i, $dl) === $delim;
     }
 
     public function getServerInfo(): array
@@ -1352,67 +1724,12 @@ class Database
         return $results;
     }
 
-    private function splitSqlStatements(string $sql): array
+    private function splitSqlStatements_LEGACY_REMOVED(string $sql): array
     {
-        $statements = [];
-        $current = '';
-        $len = strlen($sql);
-        $i = 0;
-        $inSingleQuote = false;
-        $inDoubleQuote = false;
-
-        while ($i < $len) {
-            $ch = $sql[$i];
-
-            // Skip escaped characters inside strings
-            if ($ch === '\\' && ($inSingleQuote || $inDoubleQuote)) {
-                $current .= $ch . ($sql[$i + 1] ?? '');
-                $i += 2;
-                continue;
-            }
-
-            // Track string state
-            if ($ch === "'" && !$inDoubleQuote) {
-                $inSingleQuote = !$inSingleQuote;
-            } elseif ($ch === '"' && !$inSingleQuote) {
-                $inDoubleQuote = !$inDoubleQuote;
-            }
-
-            // Statement delimiter (only outside strings)
-            if ($ch === ';' && !$inSingleQuote && !$inDoubleQuote) {
-                $trimmed = trim($current);
-                if (!empty($trimmed)) {
-                    $statements[] = $trimmed;
-                }
-                $current = '';
-                $i++;
-                continue;
-            }
-
-            // Skip single-line comments
-            if (!$inSingleQuote && !$inDoubleQuote && $ch === '-' && ($sql[$i + 1] ?? '') === '-') {
-                $eol = strpos($sql, "\n", $i);
-                $i = $eol === false ? $len : $eol + 1;
-                continue;
-            }
-
-            // Skip block comments
-            if (!$inSingleQuote && !$inDoubleQuote && $ch === '/' && ($sql[$i + 1] ?? '') === '*') {
-                $end = strpos($sql, '*/', $i + 2);
-                $i = $end === false ? $len : $end + 2;
-                continue;
-            }
-
-            $current .= $ch;
-            $i++;
-        }
-
-        $trimmed = trim($current);
-        if (!empty($trimmed)) {
-            $statements[] = $trimmed;
-        }
-
-        return $statements;
+        // Replaced by the public splitSqlStatements() above which handles
+        // backticks, DELIMITER directives, hash comments, and doubled-quote
+        // escapes in addition to all the cases this one covered.
+        return $this->splitSqlStatements($sql);
     }
 
     /**

@@ -15,7 +15,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['sql'])) {
             if (isset($auth) && $auth->isReadOnly() && $auth->isWriteQuery($sqlInput)) {
                 $queryResult = ['success' => false, 'error' => 'Write operations are disabled in read-only mode.', 'code' => '', 'time' => 0];
             } else {
-                $queryResult = $dbInstance->executeQuery($currentDb ?? 'mysql', $sqlInput);
+                $queryResult = $dbInstance->executeQueries($currentDb ?? 'mysql', $sqlInput);
                 if (isset($auth)) {
                     $auth->logQuery($currentDb ?? 'mysql', $sqlInput, $queryResult['time'] ?? 0);
                 }
@@ -32,7 +32,7 @@ elseif (!empty($_GET['sql'])) {
         if (isset($auth) && $auth->isReadOnly() && $auth->isWriteQuery($sqlInput)) {
             $queryResult = ['success' => false, 'error' => 'Write operations are disabled in read-only mode.', 'code' => '', 'time' => 0];
         } else {
-            $queryResult = $dbInstance->executeQuery($currentDb ?? 'mysql', $sqlInput);
+            $queryResult = $dbInstance->executeQueries($currentDb ?? 'mysql', $sqlInput);
             if (isset($auth)) {
                 $auth->logQuery($currentDb ?? 'mysql', $sqlInput, $queryResult['time'] ?? 0);
             }
@@ -54,6 +54,27 @@ function ledger_record_history(string $sql, ?string $db, array $result, int $max
     $resultType = $result['type'] ?? null;
     $affected = $result['affected'] ?? null;
     $count = $result['count'] ?? null;
+
+    // Multi-statement: aggregate stats and use a synthetic type
+    if (!empty($result['multi'])) {
+        $resultType = 'multi';
+        // First-error message wins when not all succeeded
+        if (!$success) {
+            foreach ($result['statements'] ?? [] as $s) {
+                if (!($s['success'] ?? true)) {
+                    $error = $s['error'] ?? 'Unknown error';
+                    break;
+                }
+            }
+        }
+        // Aggregate counts across statements
+        $count = 0;
+        $affected = 0;
+        foreach ($result['statements'] ?? [] as $s) {
+            if (($s['type'] ?? null) === 'select') $count += (int)($s['count'] ?? 0);
+            else $affected += (int)($s['affected'] ?? 0);
+        }
+    }
 
     // Rows value used by the row count badge: prefer SELECT count, fall back to affected
     $rowsForBadge = $count ?? $affected ?? 0;
@@ -370,6 +391,83 @@ document.addEventListener('DOMContentLoaded', function() {
 
 <!-- Results -->
 <?php if ($queryResult !== null): ?>
+<?php if (!empty($queryResult['multi'])): ?>
+    <!-- Multi-statement result summary -->
+    <div style="margin-top:16px;">
+        <div class="result-meta" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <strong>
+                <?php if ($queryResult['success']): ?>
+                    ✓ <?= (int)$queryResult['executed'] ?> statements executed
+                <?php else: ?>
+                    ✗ <?= (int)$queryResult['executed'] ?> of <?= (int)$queryResult['total'] ?> statements executed
+                    <span style="color:var(--danger);">(failed at #<?= (int)($queryResult['failed_at'] ?? 0) + 1 ?>)</span>
+                <?php endif; ?>
+            </strong>
+            <span style="color:var(--text-muted);">total <?= $queryResult['time'] ?>s</span>
+        </div>
+        <?php foreach ($queryResult['statements'] as $idx => $stmtResult): ?>
+        <div class="multi-stmt-card" style="margin-top:12px;border:1px solid var(--border);border-radius:var(--radius-md);overflow:hidden;">
+            <div class="multi-stmt-header" style="padding:8px 12px;background:var(--bg-sunk);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;font-family:var(--font-mono);font-size:var(--font-size-xs);">
+                <span style="color:<?= $stmtResult['success'] ? 'var(--accent)' : 'var(--danger)' ?>;font-weight:700;">
+                    <?= $stmtResult['success'] ? '✓' : '✗' ?> #<?= $idx + 1 ?>
+                </span>
+                <span style="color:var(--text-muted);"><?= $stmtResult['time'] ?? '?' ?>s</span>
+                <span style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><?= h(truncate(preg_replace('/\s+/', ' ', $stmtResult['sql'] ?? ''), 120)) ?></span>
+            </div>
+            <div style="padding:12px;">
+                <?php if (!$stmtResult['success']): ?>
+                    <div class="error-box" style="margin:0;">
+                        <strong>ERROR <?= h($stmtResult['code'] ?? '') ?>:</strong> <?= h($stmtResult['error']) ?>
+                    </div>
+                <?php elseif (($stmtResult['type'] ?? null) === 'select'): ?>
+                    <div class="result-meta" style="margin-bottom:8px;">
+                        <?= format_number($stmtResult['count']) ?> rows returned
+                    </div>
+                    <?php if (!empty($stmtResult['rows'])): ?>
+                    <div class="table-wrapper">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <?php foreach ($stmtResult['columns'] as $col): ?>
+                                    <th><?= h($col) ?></th>
+                                    <?php endforeach; ?>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach (array_slice($stmtResult['rows'], 0, 100) as $row): ?>
+                                <tr>
+                                    <?php foreach ($stmtResult['columns'] as $col): ?>
+                                    <td>
+                                        <?php if ($row[$col] === null): ?>
+                                        <span class="cell-null">NULL</span>
+                                        <?php else: ?>
+                                        <?= h(truncate(strval($row[$col]), 100)) ?>
+                                        <?php endif; ?>
+                                    </td>
+                                    <?php endforeach; ?>
+                                </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                        <?php if (count($stmtResult['rows']) > 100): ?>
+                        <div style="color:var(--text-muted);padding:8px;font-size:var(--font-size-xs);text-align:center;">
+                            Showing first 100 of <?= format_number($stmtResult['count']) ?> rows.
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                    <?php else: ?>
+                    <div style="color:var(--text-muted);font-size:var(--font-size-xs);">Empty result set</div>
+                    <?php endif; ?>
+                <?php else: ?>
+                    <div style="color:var(--text-secondary);font-size:var(--font-size-xs);">
+                        <?= format_number($stmtResult['affected'] ?? 0) ?> row(s) affected
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+        <?php endforeach; ?>
+    </div>
+<?php else: ?>
 <div style="margin-top:16px;">
     <?php if (!$queryResult['success']): ?>
         <div class="error-box">
@@ -416,6 +514,7 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
     <?php endif; ?>
 </div>
+<?php endif; ?>
 <?php endif; ?>
 
 <!-- Quick Queries -->

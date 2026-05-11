@@ -313,12 +313,20 @@ class Auth
      */
     public function isWriteQuery(string $sql): bool
     {
-        $trimmed = strtoupper(ltrim($sql));
         $writeKeywords = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'TRUNCATE',
             'CREATE', 'RENAME', 'REPLACE', 'GRANT', 'REVOKE', 'LOCK', 'UNLOCK'];
 
-        foreach ($writeKeywords as $kw) {
-            if (str_starts_with($trimmed, $kw)) return true;
+        // Multi-statement support: any statement starting with a write keyword
+        // counts. Split crudely on semicolons (this check tolerates some false
+        // positives — e.g. a semicolon inside a string — but it errs toward
+        // safer rejection rather than letting writes through.)
+        $statements = preg_split('/;\s*/', $sql);
+        foreach ($statements as $stmt) {
+            $trimmed = strtoupper(ltrim($stmt));
+            if ($trimmed === '') continue;
+            foreach ($writeKeywords as $kw) {
+                if (str_starts_with($trimmed, $kw)) return true;
+            }
         }
         return false;
     }
