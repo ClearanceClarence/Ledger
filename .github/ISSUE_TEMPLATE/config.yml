@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/ClearanceClarence/Ledger/security/advisories/new
+    about: Report a security issue privately. Never file security issues publicly.
+  - name: Question or discussion
+    url: https://github.com/ClearanceClarence/Ledger/discussions
+    about: For "how do I do X" or open-ended discussions, use Discussions instead of opening an issue.

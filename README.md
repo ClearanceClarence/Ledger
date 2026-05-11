@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ClearanceClarence/Ledger/refs/heads/main/ledger/assets/logo.svg" alt="Ledger" width="540">
+  <img src="https://raw.githubusercontent.com/ClearanceClarence/Ledger/refs/heads/main/assets/logo.svg" alt="Ledger" width="540">
 </p>
 
 <p align="center">
@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-1.8.3--alpha-4ade80?style=flat-square" alt="Version 1.8.3-alpha">
+  <img src="https://img.shields.io/badge/Version-1.0.0--beta-4ade80?style=flat-square" alt="Version 1.0.0-beta">
   <img src="https://img.shields.io/badge/PHP-7.4+-777BB4?style=flat-square&logo=php&logoColor=white" alt="PHP">
   <img src="https://img.shields.io/badge/MySQL-5.7+-4479A1?style=flat-square&logo=mysql&logoColor=white" alt="MySQL">
   <img src="https://img.shields.io/badge/MariaDB-10.3+-003545?style=flat-square&logo=mariadb&logoColor=white" alt="MariaDB">
@@ -75,11 +75,16 @@ Ledger is a ground-up replacement that keeps the one thing phpMyAdmin gets right
 
 ## 🚀 Get Started
 
+Clone or extract Ledger into your web root (`htdocs/`, `www/`, `public_html/`) and open it in a browser:
+
 ```bash
-git clone https://github.com/ClearanceClarence/Ledger.git
+cd /path/to/htdocs
+git clone https://github.com/ClearanceClarence/Ledger.git ledger
 ```
 
-Copy the `ledger/` folder into your web root (`htdocs/`, `www/`, `public_html/`) and open it in a browser.
+Then open `http://localhost/ledger/` in your browser. You can name the destination folder anything you want — `ledger`, `db`, `admin`, whatever fits your setup.
+
+If you'd rather download a release zip, grab the latest from the [Releases](https://github.com/ClearanceClarence/Ledger/releases) page and extract it into your web root.
 
 The **first-run installer** walks you through three steps:
 
@@ -101,7 +106,7 @@ cd Ledger
 docker-compose up -d
 ```
 
-Open `http://localhost:8080/ledger/` and use host `db`, password `ledger_root_pass` in the installer. MySQL is exposed on port `3307` for external tools. Three named volumes persist data across restarts. See [DOCKER.md](DOCKER.md) for full details.
+Open `http://localhost:8080/` and use host `db`, password `ledger_root_pass` in the installer. MySQL is exposed on port `3307` for external tools. Three named volumes persist data across restarts. See [DOCKER.md](DOCKER.md) for full details.
 
 ---
 
@@ -144,6 +149,7 @@ The system uses a two-pass approach: first pass extracts all table references an
 - Error display with MySQL error code
 - **EXPLAIN button** — one-click query plan analysis. Results rendered in a dedicated panel with color-coded access types (green: const/eq_ref, blue: ref/range, amber: index, red: ALL), warning badges on Extra notes (filesort, temporary), row count highlighting, and a legend. Works on selected text or the full editor content
 - **Persistent drafts** — editor content auto-saves to `sessionStorage` per database. Navigate away and come back — your query is still there. Cleared after successful execution
+- **Multi-statement execution** — paste a full migration with multiple `CREATE TABLE`, `INSERT`, `ALTER` statements separated by semicolons. Each runs in sequence with its own result card. Supports `DELIMITER` directives for stored procedure bodies, plus `USE`, `CREATE DATABASE`, and `DROP DATABASE` mid-script
 
 ---
 
@@ -248,6 +254,7 @@ Open the **ER Diagram tab** and every table in the database is displayed as a ca
 - **Zoom** with scroll wheel or `+`/`−` buttons.
 - **Fit** button auto-centers all tables in the viewport.
 - **Auto Layout** runs a force-directed physics simulation (repulsion, spring attraction, gravity, cooling).
+- **Reset** button (red, with confirmation) deletes the saved layout for the current database and rebuilds from auto-layout against the live schema.
 - **Double-click** a table to navigate to its Structure tab.
 - **Hover** a table to highlight its relationships — connected lines brighten, unrelated tables dim.
 
@@ -395,6 +402,15 @@ On the Structure tab, every column is editable inline:
 - Collation column shows per-column collation (from `SHOW FULL COLUMNS`)
 - CREATE statement at the bottom, syntax-highlighted using the tokenizer
 
+### Index Management
+
+The Indexes panel on the Structure tab gives you full control over keys:
+
+- **Composite keys on one row** — multi-column indexes show their columns comma-separated rather than one row per column
+- **Kind badges** — PRIMARY (gold), UNIQUE (blue), INDEX (purple), FULLTEXT and SPATIAL (purple with type label)
+- **Add Index form** — type dropdown (PRIMARY / UNIQUE / INDEX / FULLTEXT / SPATIAL), optional name (auto-generated for PRIMARY), and a click-to-select column picker with numbered order badges
+- **Drop per index** — red Drop button per row with confirmation. PRIMARY KEY drops get extra-cautious wording.
+
 ### Foreign Key Visualization
 
 The Structure tab queries `information_schema.KEY_COLUMN_USAGE` and `REFERENTIAL_CONSTRAINTS` to display:
@@ -428,9 +444,11 @@ For partitioned tables, the panel shows method, expression, and a table of all p
 ### Import SQL
 
 Upload a `.sql` file and every statement is executed sequentially. The custom parser splits on `;` while respecting:
-- Single-quoted and double-quoted strings
-- Single-line comments (`--`)
-- Block comments (`/* */`)
+- Single-quoted and double-quoted strings (including doubled-quote escapes like `'it''s'`)
+- Backtick-quoted identifiers
+- Single-line comments (`--` and `#`)
+- Block comments (`/* */`, including conditional `/*! ... */`)
+- `DELIMITER` directives (for stored procedure bodies)
 - Escaped characters inside strings
 
 **Target mode selector** — two options:
@@ -451,8 +469,8 @@ CSV is parsed with `fgetcsv()` (handles multiline quoted fields). Rows inserted 
 
 ### Export
 
-- **Table export** — SQL dump (`CREATE TABLE` + `INSERT`) or CSV with column headers
-- **Database export** — full dump with `CREATE DATABASE IF NOT EXISTS` + `USE` + all tables
+- **Table export** — SQL dump (`CREATE TABLE` + `INSERT`) or CSV with column headers. Mode selector: Structure + data / Structure only / Data only
+- **Database export** — full dump with `CREATE DATABASE IF NOT EXISTS` + `USE` + all tables. Style selector: **Single-statement** (everything inline) or **phpMyAdmin-compatible** (4-pass: tables → data → indexes → constraints — byte-for-byte interchangeable with phpMyAdmin's dumps)
 - **Export page** — shows file size estimates and row counts per table. Works without a database selected (shows all databases with one-click download)
 
 All file uploads support **drag-and-drop** with visual hover feedback.
@@ -473,7 +491,7 @@ Not bolted on. Ledger ships with a 12-step security chain — all opt-in so loca
 | 6 | **TOTP Two-Factor Auth** | Optional per-user TOTP (RFC 6238). Enable from Profile → scan QR code with any authenticator app (Google Authenticator, Authy, 1Password). 6-digit verification on login with ±1 time window for clock drift. Disable any time from Profile |
 | 7 | **Brute force protection** | IP-based lockout after N failed attempts (configurable). Lockout duration configurable. Both password and 2FA failures count |
 | 8 | **CSRF tokens** | Generated per session, validated on every POST form and every AJAX request. Meta tag in `<head>` for JS access |
-| 9 | **Read-only mode** | Regex-based detection of write keywords (`INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `TRUNCATE`, `CREATE`, `GRANT`, `REVOKE`). Blocked at both UI and API level |
+| 9 | **Read-only mode** | Multi-statement-aware detection of write keywords (`INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `TRUNCATE`, `CREATE`, `GRANT`, `REVOKE`). Every statement in a batch is checked, so `USE foo; DROP TABLE bar;` is rejected as a write. Blocked at both UI and API level |
 | 10 | **Hidden databases** | Configurable list filtered from sidebar, autocomplete, URL access, and export. Accessing a hidden DB via URL resets to home |
 | 11 | **Query audit logging** | Every query logged to a file with timestamp, username, database, IP address, and execution time |
 | 12 | **`.htaccess` rules** | Blocks direct web access to `config.php`, `includes/`, `logs/`, hidden files. Disables directory listing. Sets security headers at Apache level |
@@ -500,11 +518,13 @@ Not bolted on. Ledger ships with a 12-step security chain — all opt-in so loca
 ],
 ```
 
+For security disclosure procedures, see [SECURITY.md](SECURITY.md).
+
 ---
 
 ## 🎨 Theming & Fonts
 
-### 10 Built-In Themes
+### 20 Built-In Themes
 
 | Light | Dark |
 |:------|:-----|
@@ -519,7 +539,7 @@ Not bolted on. Ledger ships with a 12-step security chain — all opt-in so loca
 | **Sand** — warm beige, amber tones | **Solarized Dark** — Ethan Schoonover's classic |
 | **Solarized Light** — the light companion | **Tokyo Night** — deep blue with neon cyan/purple |
 
-20 themes total — each covers: surfaces, borders, text hierarchy, all SQL token colors (12 types), editor chrome, autocomplete, inline editing states, scrollbars, badges, modals, cell types, form inputs, buttons, panel sections, EXPLAIN badges, trigger badges, FK links, danger zones, and zebra striping.
+Each theme covers: surfaces, borders, text hierarchy, all SQL token colors (12 types), editor chrome, autocomplete, inline editing states, scrollbars, badges, modals, cell types, form inputs, buttons, panel sections, EXPLAIN badges, trigger badges, FK links, danger zones, and zebra striping.
 
 Switch themes from the header dropdown — organized into Light and Dark groups, alphabetically sorted. Saved to cookie. Takes effect immediately, no page reload.
 
@@ -588,7 +608,15 @@ Press `?` anywhere (except when typing in an input) to open the shortcut overlay
 ## 📁 Project Structure
 
 ```
-ledger/
+Ledger/                          # repo root = install root
+├── README.md                    # This file
+├── CHANGELOG.md                 # Per-release notes
+├── LICENSE                      # MIT
+├── SECURITY.md                  # Vulnerability disclosure
+├── CONTRIBUTING.md              # Contributor guide
+├── CODE_OF_CONDUCT.md           # Community standards
+├── DOCKER.md                    # Docker quick start
+├── .github/                     # Issue and PR templates
 ├── index.php                    # Router + security chain
 ├── config.template.php          # Template for installer
 ├── install.php                  # 3-step first-run wizard
@@ -596,13 +624,14 @@ ledger/
 ├── .htaccess                    # Apache security rules
 ├── Dockerfile                   # PHP 8.2 + Apache image
 ├── docker-compose.yml           # Ledger + MySQL 8.0
-├── DOCKER.md                    # Docker quick start guide
 ├── assets/
-│   └── logo.svg
+│   ├── logo.svg                 # Full wordmark
+│   └── mark.svg                 # Square icon
 ├── includes/
 │   ├── Database.php             # PDO wrapper: browse, query, export, import,
 │   │                            # FK queries, views, triggers, routines,
-│   │                            # partitions, maintenance, table ops
+│   │                            # partitions, maintenance, table ops,
+│   │                            # multi-statement execution, SQL splitter
 │   ├── Auth.php                 # Auth + TOTP 2FA, CSRF, IP whitelist,
 │   │                            # brute force, logging
 │   ├── TOTP.php                 # Zero-dep RFC 6238 TOTP
@@ -611,32 +640,29 @@ ledger/
 │   ├── helpers.php              # Theme loader, font system, formatters
 │   └── icons.php                # 30+ inline SVG icons
 ├── templates/
-│   ├── layout.php               # HTML shell, header, sidebar, tabs, footer,
-│   │                            # profile modal (password + 2FA)
+│   ├── layout.php               # HTML shell, header, sidebar, tabs, footer
 │   ├── login.php                # Themed login page
 │   ├── login_2fa.php            # TOTP verification page
 │   ├── sidebar.php              # DB/table/view tree with filter, favorites
-│   ├── browse.php               # Server/DB overview, data grid, FK drill-down,
-│   │                            # row detail, inline edit, bulk select,
-│   │                            # insert row, create table, table ops
+│   ├── browse.php               # Data grid, FK drill-down, inline edit,
+│   │                            # bulk select, insert row, create table
 │   ├── structure.php            # Editable columns, FK display, indexes,
 │   │                            # CREATE statement, maintenance, partitions,
 │   │                            # triggers CRUD, routines CRUD
 │   ├── sql.php                  # SQL editor + EXPLAIN + saved queries +
-│   │                            # query history
+│   │                            # query history + multi-statement results
 │   ├── search.php               # Search across all tables
-│   ├── er.php                   # Interactive ER diagram with save/load,
-│   │                            # crow's foot notation, right-click menu
+│   ├── er.php                   # Interactive ER diagram with save/load
 │   ├── operations.php           # Alter, rename, move, copy, truncate, drop
 │   ├── info.php                 # Table info
-│   ├── export.php               # SQL/CSV export
+│   ├── export.php               # SQL/CSV export with mode + style selectors
 │   ├── import.php               # SQL/CSV import with drag-drop + preview
 │   ├── server_info.php          # Server stats
 │   ├── settings.php             # Settings page + font customization
 │   ├── settings_save.php        # Settings save helper (PRG)
 │   └── connection_error.php     # Error display
 ├── js/
-│   ├── ledger.js               # Tokenizer (612 tokens), autocomplete,
+│   ├── ledger.js                # Tokenizer (612 tokens), autocomplete,
 │   │                            # inline edit, bulk select, modals, CSRF,
 │   │                            # favorites, sidebar filter, persistent drafts,
 │   │                            # mini-editor highlighter, shortcut overlay
@@ -665,9 +691,9 @@ PDO MySQL extension required (`php-pdo` + `php-mysql`). Sessions must be enabled
 
 ## 🤝 Contributing
 
-1. Fork → branch → commit → PR
-2. **Theme contributions** especially welcome — add a `themes/your-theme/` folder
-3. Bug reports and feature requests via [Issues](https://github.com/ClearanceClarence/Ledger/issues)
+Bug reports, feature requests, and PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. Theme contributions especially welcome — drop a `themes/your-theme/` folder.
+
+This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
 
 ---
 
@@ -682,7 +708,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 ---
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ClearanceClarence/Ledger/refs/heads/main/ledger/assets/logo.svg" alt="Ledger" width="360">
+  <img src="https://raw.githubusercontent.com/ClearanceClarence/Ledger/refs/heads/main/assets/logo.svg" alt="Ledger" width="380">
   <br>
   <sub>Built with PHP, vanilla JS, and zero external dependencies.</sub>
   <br>

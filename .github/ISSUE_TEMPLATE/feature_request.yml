@@ -1,0 +1,60 @@
+name: Feature request
+description: Suggest a new feature or improvement
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing a feature request:
+
+        - Read the [CONTRIBUTING guide](https://github.com/ClearanceClarence/Ledger/blob/main/CONTRIBUTING.md#requesting-features). There's a list of things that are intentionally out of scope.
+        - Search [existing issues](https://github.com/ClearanceClarence/Ledger/issues?q=is%3Aissue) — including closed ones — to see if this has come up before.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: |
+        Describe the situation you're in, what you're trying to accomplish, and why the current behavior gets in your way. Focus on the problem, not your proposed solution.
+      placeholder: |
+        Example: "I run migrations from a SQL file, and Ledger's import currently rolls back the whole file on any error. For my workflow I'd want to see which statement failed and continue with the rest."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution (optional)
+      description: |
+        How would you imagine this working? An interface sketch, a description of the new behavior, or an example are all helpful — but not required. A clear problem statement is more important than a polished solution.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered (optional)
+      description: |
+        Did you try working around this in a different way? Why didn't that work?
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Rough scope
+      description: |
+        Your best guess at how big this is. The maintainer will reassess.
+      options:
+        - Small (a tweak to existing behavior, a few lines)
+        - Medium (a new panel, new endpoint, contained feature)
+        - Large (architectural change, new major feature)
+        - Not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have read the CONTRIBUTING guide and this isn't on the "out of scope" list
+          required: true
+        - label: I have searched existing issues and this is not a duplicate
+          required: true

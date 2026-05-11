@@ -1,0 +1,95 @@
+name: Bug report
+description: Something in Ledger isn't working as expected
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Before submitting:
+
+        - Search [existing issues](https://github.com/ClearanceClarence/Ledger/issues?q=is%3Aissue) for duplicates.
+        - Check the [CHANGELOG](https://github.com/ClearanceClarence/Ledger/blob/main/CHANGELOG.md) — your version might already have a fix.
+        - Look at the contents of the `logs/` directory in your install. Real errors usually leave traces there.
+
+  - type: input
+    id: version
+    attributes:
+      label: Ledger version
+      description: From the app footer, or `LEDGER_VERSION` in `index.php`.
+      placeholder: "1.0.0-beta"
+    validations:
+      required: true
+
+  - type: input
+    id: php_version
+    attributes:
+      label: PHP version
+      description: Output of `php -v` (first line is enough).
+      placeholder: "PHP 8.2.18"
+    validations:
+      required: true
+
+  - type: input
+    id: db_version
+    attributes:
+      label: MySQL / MariaDB version
+      description: Run `SELECT VERSION();` from inside Ledger or any client.
+      placeholder: "10.11.6-MariaDB"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system + web server
+      description: e.g. "Windows 11 + XAMPP Apache 2.4", "Ubuntu 22.04 + nginx 1.24", "Docker compose stack".
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The exact sequence to trigger this. Be specific — "It doesn't work" doesn't help me reproduce.
+      placeholder: |
+        1. Go to the SQL tab
+        2. Paste: SELECT ...
+        3. Click Run
+        4. Observe the error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened?
+      description: Include the exact error message if any. Screenshots are welcome.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and console output
+      description: |
+        Anything from `logs/`, the PHP error log, or the browser console. Use a code block (` ``` `).
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have searched existing issues and this is not a duplicate
+          required: true
+        - label: I'm running the latest release or a recent main-branch build
+          required: true
+        - label: The bug is reproducible — it's not a one-time glitch
+          required: true
