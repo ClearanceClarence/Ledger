@@ -16,6 +16,7 @@ All notable changes to [Ledger](https://github.com/ClearanceClarence/Ledger) are
 
 ### New Features
 
+- **Client-side update check.** When logged in, Ledger's admin UI now checks `https://tryledger.dev/api/version.json` at most once per day to see if a newer release is available, and shows a dismissible banner if one is. The request runs in the user's browser — no server-side outbound call is made, and the endpoint sends no parameters or cookies. Security updates get a distinct non-dismissible banner. The check can be turned off in **Settings → Check for updates**. See [SECURITY.md](SECURITY.md#privacy--network-behavior) for the full privacy disclosure.
 - **Multi-statement execution in the SQL editor.** Paste a full migration with multiple `CREATE TABLE`, `INSERT`, `ALTER` statements separated by semicolons and run them all in one go. Each statement is executed sequentially and its result is shown in its own card with row counts, errors, and timing. Execution stops on the first failure (use `START TRANSACTION` / `COMMIT` if you need atomicity).
 - **DELIMITER directive support.** The splitter handles `DELIMITER //` blocks correctly, so you can paste stored procedure definitions with `BEGIN ... END//` bodies without breaking the parse.
 - **USE works in the SQL editor.** Paste `USE mydb; CREATE TABLE foo (...); INSERT INTO foo ...` and it executes correctly. Previously the second and third statements ran against the wrong database because each statement reconnected and lost the USE context.

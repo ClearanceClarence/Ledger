@@ -18,6 +18,7 @@ return [
         'rows_per_page'     => 50,
         'max_query_history'  => 50,
         'enable_export'     => true,
+        'version_check'     => true,
         'fonts' => [
             'general'  => '',
             'code'     => '',

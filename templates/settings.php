@@ -97,6 +97,15 @@ $db  = $config['db'] ?? [];
                 <input type="checkbox" name="enable_export" <?= !empty($app['enable_export']) ? 'checked' : '' ?>>
                 <?= icon('download', 14) ?> Enable data export (SQL / CSV)
             </label>
+            <label class="settings-check">
+                <input type="checkbox" name="version_check" <?= ($app['version_check'] ?? true) ? 'checked' : '' ?>>
+                <?= icon('refresh', 14) ?> Check for updates
+            </label>
+            <div class="settings-help" style="font-size:0.8rem; color:var(--text-muted); margin:-0.25rem 0 0 1.7rem; line-height:1.45;">
+                When enabled, your browser checks <code>tryledger.dev</code> once
+                per day for new Ledger releases. The request sends no parameters
+                and no cookies — only the standard things any web server logs.
+            </div>
         </div>
     </div>
 

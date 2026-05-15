@@ -62,3 +62,20 @@ A few things worth knowing about Ledger's security posture so you can decide whe
 I'll credit you in the published advisory and in the release notes for the fix. If you have a preferred name, link, or affiliation to be credited under, mention it in your report. If you'd rather stay anonymous, that's also fine — just say so.
 
 Thanks for taking the time to report responsibly.
+
+## Privacy & network behavior
+
+Ledger does not phone home from the server. The installed application makes no outbound network calls from PHP during normal operation.
+
+There is one optional, client-side network call: when a logged-in user is browsing the admin UI with **Check for updates** enabled (default on, opt-out under Settings), their browser makes a `GET` request to `https://tryledger.dev/api/version.json` at most once every 24 hours. This request:
+
+- Goes from the user's browser directly to `tryledger.dev` — not via your server, and not to GitHub.
+- Sends no parameters, no cookies, no identifying data. The endpoint reads no input.
+- Receives a small JSON response with the latest version number, release date, and a security flag — nothing about your install is exchanged.
+- Is subject to `tryledger.dev`'s standard web access logs (IP address, user agent, timestamp), the same as any visit to the marketing site.
+- Is cached in the user's browser localStorage for 24 hours.
+- Fails silent if the request times out, is rate-limited, or is blocked by a corporate firewall.
+
+The endpoint response format is documented at <https://tryledger.dev/api/version.json> — you can fetch it from a terminal to see exactly what would be returned.
+
+If you'd rather make no outbound requests at all, disable **Check for updates** in Settings. The setting persists in `config.php`.

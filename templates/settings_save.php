@@ -71,6 +71,7 @@ function ledger_save_settings(array $config, $auth): array
     $newConfig['app']['default_theme']   = $_POST['default_theme'] ?? 'light-clean';
     $newConfig['app']['rows_per_page']   = max(10, min(500, (int)($_POST['rows_per_page'] ?? 50)));
     $newConfig['app']['enable_export']   = isset($_POST['enable_export']);
+    $newConfig['app']['version_check']   = isset($_POST['version_check']);
 
     // Fonts
     $fontZones = function_exists('ledger_font_zones') ? ledger_font_zones() : [];

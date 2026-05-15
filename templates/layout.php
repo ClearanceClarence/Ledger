@@ -24,6 +24,18 @@
     <?php if (isset($auth)): ?>
     <?= $auth->csrfMeta() ?>
     <?php endif; ?>
+    <!-- Version metadata, used by the optional update-check JS -->
+    <meta name="ledger-version" content="<?= h(LEDGER_VERSION) ?>">
+    <?php
+        // Load the client-side update check only when:
+        //   - a real user session is active (no banner on the login screen)
+        //   - the setting is enabled (default true, opt-out in settings)
+        $versionCheckEnabled = !empty($config['app']['version_check'] ?? true);
+        $userLoggedIn = isset($auth) && $auth->isLoggedIn();
+        if ($versionCheckEnabled && $userLoggedIn):
+    ?>
+    <script src="js/version-check.js" defer></script>
+    <?php endif; ?>
 </head>
 <body>
 <div class="app-wrapper">
