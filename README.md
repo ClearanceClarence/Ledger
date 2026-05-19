@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-1.0.0--beta-4ade80?style=flat-square" alt="Version 1.0.0-beta">
+  <img src="https://img.shields.io/badge/Version-1.0.1--beta-4ade80?style=flat-square" alt="Version 1.0.1-beta">
   <img src="https://img.shields.io/badge/PHP-7.4+-777BB4?style=flat-square&logo=php&logoColor=white" alt="PHP">
   <img src="https://img.shields.io/badge/MySQL-5.7+-4479A1?style=flat-square&logo=mysql&logoColor=white" alt="MySQL">
   <img src="https://img.shields.io/badge/MariaDB-10.3+-003545?style=flat-square&logo=mariadb&logoColor=white" alt="MariaDB">
@@ -427,17 +427,22 @@ For partitioned tables, the panel shows method, expression, and a table of all p
 
 ### Import SQL
 
-Upload a `.sql` file and every statement is executed sequentially. The custom parser splits on `;` while respecting:
-- Single-quoted and double-quoted strings
-- Single-line comments (`--`)
-- Block comments (`/* */`)
-- Escaped characters inside strings
+Upload a `.sql` file and every statement is executed sequentially. The custom parser splits on `;` while respecting single-quoted and double-quoted strings, single-line comments (`--` and `#`), block comments (`/* */`), backtick-quoted identifiers, doubled-quote string escapes, and `DELIMITER` directives for stored procedures.
 
 **Target mode selector** — two options:
 - "Into existing database" — pick from a dropdown, statements execute in that context
 - "New database from file" — no database selected, the file's own `CREATE DATABASE` and `USE` statements take effect
 
-Results show per-statement success/error counts, total rows affected, execution time. Failed statements listed in a collapsible detail section with the SQL snippet and MySQL error.
+**Streaming with live progress.** The uploaded file is read from disk in 64 KB chunks rather than loaded into memory all at once, so imports of 300 MB+ dumps run in constant memory (~145 KB regardless of file size). The UI shows a four-phase progress bar:
+
+1. **Upload** — real bytes-uploaded / total via `XMLHttpRequest.upload.onprogress`
+2. **Counting** — quick pre-scan to give the bar a real denominator
+3. **Importing** — `X / Y statements · N errors · MM:SS`, updated ~10 times per second
+4. **Done** — inline result card, no page reload
+
+**Fast mode** (toggle on the import form, default ON). Wraps DML statements in transactions and disables `foreign_key_checks` / `unique_checks` for the duration of the import, committing at each DDL boundary. Typical speedup is 5-20x on INSERT-heavy dumps because per-statement fsyncs become per-transaction fsyncs. On error, the current transaction rolls back and the import aborts; tables committed at earlier DDL boundaries remain. The result card explains this clearly. Turn the toggle off for per-statement isolation if you need it.
+
+Results show per-statement success/error counts, total rows affected, and execution time. Failed statements are listed in a collapsible detail section with the SQL snippet and MySQL error. For very large imports, the error list is capped at the first 100 entries with "Showing first 100 of N failed statements" — total counts remain accurate.
 
 ### Import CSV
 
@@ -451,11 +456,15 @@ CSV is parsed with `fgetcsv()` (handles multiline quoted fields). Rows inserted 
 
 ### Export
 
-- **Table export** — SQL dump (`CREATE TABLE` + `INSERT`) or CSV with column headers
-- **Database export** — full dump with `CREATE DATABASE IF NOT EXISTS` + `USE` + all tables
+- **Table export** — SQL dump (`CREATE TABLE` + multi-row `INSERT`) or CSV with column headers
+- **Database export** — full dump with `CREATE DATABASE IF NOT EXISTS` + `USE` + all tables. Two output styles: single-statement (one logical pass per table) or phpMyAdmin-compatible (4-pass: structure, data, indexes, constraints)
 - **Export page** — shows file size estimates and row counts per table. Works without a database selected (shows all databases with one-click download)
 
+**Streaming exports.** All export routes stream rows directly to the response via an unbuffered PDO cursor, so memory stays roughly constant regardless of table size. Rows are batched into multi-row INSERT statements (`INSERT INTO t (cols) VALUES (...),(...),(...);`) — every 500 rows or ~4 MB, whichever first. This produces noticeably smaller dump files and makes re-imports substantially faster (~500x fewer statements to execute).
+
 All file uploads support **drag-and-drop** with visual hover feedback.
+
+> **Very large imports (multi-gigabyte):** even with fast mode and multi-row INSERTs, PHP-based imports are limited by round-trip latency between PHP and MySQL. For dumps over ~1 GB, using the `mysql` CLI directly (`mysql -u user -p < dump.sql`) is significantly faster than any PHP-based importer can achieve. Ledger is fine for typical operational dumps; the CLI is the right answer for full DB migrations.
 
 ---
 
