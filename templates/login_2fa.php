@@ -180,6 +180,13 @@
 
             <form method="post" action="?action=verify_2fa" autocomplete="off">
                 <?= $auth->csrfField() ?>
+                <?php
+                    // Carry the return URL through 2FA verification. Captured during
+                    // the initial GET when the user landed on the protected URL.
+                    $returnTo = $_SESSION['ledger_login_redirect'] ?? '';
+                    if (!is_string($returnTo)) $returnTo = '';
+                ?>
+                <input type="hidden" name="return_to" value="<?= h($returnTo) ?>">
                 <div style="margin-bottom:16px;">
                     <input type="text" name="totp_code" class="login-input totp-input"
                            placeholder="000000"

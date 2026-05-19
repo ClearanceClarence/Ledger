@@ -1216,6 +1216,73 @@ class Database
         return $output;
     }
 
+    /**
+     * Stream a table's data as INSERT statements directly to PHP output.
+     * Returns the number of rows written.
+     *
+     * Unlike exportTable(), this method:
+     *   - Uses an unbuffered query (one row at a time, constant memory)
+     *   - echoes each INSERT directly instead of building a string
+     *   - flushes the output buffer every CHUNK rows so the browser sees progress
+     *
+     * Use this for the data portion of any export that could be large.
+     * For structure-only output (small, bounded), exportTable() is fine.
+     *
+     * @return int Number of rows written
+     */
+    public function streamTableData(string $database, string $table): int
+    {
+        $pdo = $this->connect($database);
+        $tableSafe = '`' . $this->escapeIdentifier($table) . '`';
+
+        // Switch this connection to unbuffered mode so PDO doesn't load the
+        // whole table into PHP memory before returning the statement. This
+        // is the single biggest win for large-table exports.
+        //
+        // Important: while a statement is unbuffered, no other queries can
+        // run on the same connection. We restore buffered mode in finally.
+        $pdo->setAttribute(PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, false);
+
+        $count = 0;
+        $flushEvery = 200; // tune: trade off browser-visible progress vs syscall cost
+
+        try {
+            $stmt = $pdo->query("SELECT * FROM {$tableSafe}");
+            $columns = null;
+            $colList = '';
+
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                if ($columns === null) {
+                    $columns = array_keys($row);
+                    $colList = implode('`, `', $columns);
+                }
+
+                $values = [];
+                foreach ($row as $val) {
+                    $values[] = $val === null ? 'NULL' : $pdo->quote($val);
+                }
+                echo "INSERT INTO {$tableSafe} (`{$colList}`) VALUES (" . implode(', ', $values) . ");\n";
+                $count++;
+
+                // Push bytes to the browser periodically so the user sees
+                // the download progress bar grow, instead of staring at a
+                // spinner for two minutes.
+                if (($count % $flushEvery) === 0) {
+                    @ob_flush();
+                    @flush();
+                }
+            }
+            $stmt->closeCursor();
+        } finally {
+            // Always restore buffered mode — if we leave it unbuffered, the
+            // next query on this connection that's not also expecting an
+            // unbuffered cursor will misbehave.
+            $pdo->setAttribute(PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, true);
+        }
+
+        return $count;
+    }
+
     public function exportTableCsv(string $database, string $table): string
     {
         $pdo = $this->connect($database);
@@ -1235,6 +1302,47 @@ class Database
         $csv = stream_get_contents($output);
         fclose($output);
         return $csv;
+    }
+
+    /**
+     * Stream a table's contents as CSV directly to PHP output (php://output).
+     * Companion to streamTableData() — same memory profile, constant regardless
+     * of table size. Returns the number of rows written.
+     */
+    public function streamTableCsv(string $database, string $table): int
+    {
+        $pdo = $this->connect($database);
+        $tableSafe = '`' . $this->escapeIdentifier($table) . '`';
+
+        $pdo->setAttribute(PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, false);
+
+        $out = fopen('php://output', 'w');
+        $count = 0;
+        $flushEvery = 500;
+
+        try {
+            $stmt = $pdo->query("SELECT * FROM {$tableSafe}");
+            $headerWritten = false;
+
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                if (!$headerWritten) {
+                    fputcsv($out, array_keys($row));
+                    $headerWritten = true;
+                }
+                fputcsv($out, array_values($row));
+                $count++;
+                if (($count % $flushEvery) === 0) {
+                    @ob_flush();
+                    @flush();
+                }
+            }
+            $stmt->closeCursor();
+        } finally {
+            $pdo->setAttribute(PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, true);
+            // Don't fclose() php://output — that's PHP's response handle
+        }
+
+        return $count;
     }
 
     public function dropTable(string $database, string $table): bool

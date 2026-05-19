@@ -49,13 +49,13 @@
                 <span class="logo-version">v<?= h($appVersion) ?></span>
             </a>
             <div class="header-meta">
-                <span class="header-chip"><?= icon('server', 11) ?> <?= h($serverHost) ?>:<?= h($config['db']['port'] ?? '3306') ?></span>
-                <span class="header-chip"><?= icon('database', 11) ?> <?= h($serverVersion) ?> · <?= h($charset) ?></span>
-                <span class="header-chip"><?= icon('layers', 11) ?> <?= count($databases) ?> db<?= count($databases) !== 1 ? 's' : '' ?></span>
+                <span class="header-chip header-chip--server"><span class="header-chip-pulse" aria-hidden="true"></span><?= icon('server', 11) ?> <?= h($serverHost) ?>:<?= h($config['db']['port'] ?? '3306') ?></span>
+                <span class="header-chip header-chip--db"><?= icon('database', 11) ?> <?= h($serverVersion) ?> <span class="header-chip-sep">·</span> <?= h($charset) ?></span>
+                <span class="header-chip header-chip--count"><?= icon('layers', 11) ?> <?= count($databases) ?> db<?= count($databases) !== 1 ? 's' : '' ?></span>
                 <?php if ($uptime): ?>
-                <span class="header-chip"><?= icon('clock', 11) ?> <?= format_uptime($uptime) ?></span>
+                <span class="header-chip header-chip--time"><?= icon('clock', 11) ?> <?= format_uptime($uptime) ?></span>
                 <?php endif; ?>
-                <span class="header-chip dim"><?= icon('code', 11) ?> PHP <?= PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION ?></span>
+                <span class="header-chip header-chip--meta dim"><?= icon('code', 11) ?> PHP <?= PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION ?></span>
             </div>
         </div>
         <div class="header-right">

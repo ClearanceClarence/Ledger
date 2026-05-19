@@ -8,6 +8,48 @@ Notes are dated when added so it's clear what's been changing.
 
 ---
 
+## Login redirect preserves the user's intended destination
+
+Previously, visiting a URL like `/?db=astrahedron&tab=sql` while logged out would correctly redirect to the login screen — but after a successful login, the user always landed back on the dashboard (`/`), losing their original destination.
+
+Now the original query string is saved to the session on the unauthenticated GET request, and successful login (or successful 2FA verification) redirects there instead of the default dashboard.
+
+Open-redirect prevention: the saved target is re-validated before use. Rejected:
+
+- Fully-qualified URLs (`https://evil.com/...`)
+- Protocol-relative URLs (`//evil.com/...`)
+- Absolute paths (`/admin/...`)
+- Any scheme marker (`javascript://...`)
+- Raw or URL-encoded control characters (defends against CRLF/header injection)
+- Auth-flow actions (`action=login`, `action=logout`, `action=verify_2fa`)
+- Anything over 2048 chars
+
+Only relative query strings within this Ledger install can be honored. The saved target is consumed (cleared from session) on first successful use.
+
+---
+
+## Streaming exports for large databases
+
+Previously, exporting a database via `?action=export_db` loaded every row of every table into PHP memory before sending a byte to the browser. For a 279 MB database (~1M rows across all tables, exported as INSERT statements) this could:
+
+- Exhaust PHP's `memory_limit` (commonly 128–256 MB) and abort the request
+- Exceed `max_execution_time` (commonly 30s) before the response started
+- Cause the browser to time out waiting for the first byte
+
+The export path now streams row-by-row:
+
+- New methods `Database::streamTableData()` and `Database::streamTableCsv()` use an unbuffered PDO cursor (`MYSQL_ATTR_USE_BUFFERED_QUERY = false`) so rows arrive one at a time and memory stays constant regardless of table size
+- Each `INSERT` statement is `echo`d directly instead of accumulating in a `$output` string
+- Output is flushed every 200 INSERTs (or 500 CSV rows) so the browser sees download progress incrementally
+- `set_time_limit(0)` is called at the start of any export to bypass PHP's script timeout
+- All active output buffers are drained at the start of an export so internal PHP buffering doesn't hold the whole response in RAM
+
+Applies to: `?action=export_sql` (single table), `?action=export_csv` (single table CSV), `?action=export_db` (whole DB, both single-statement and phpMyAdmin-compatible styles).
+
+The original `exportTable()` and `exportTableCsv()` methods that return strings are kept for any other caller (testing, AJAX previews) but no longer used by the HTTP export routes.
+
+---
+
 ## Installer hardening
 
 ### Step navigation guard

@@ -142,6 +142,16 @@
 
             <form method="post" action="?action=login" autocomplete="on">
                 <?= $auth->csrfField() ?>
+                <?php
+                    // Pass the return URL through the form too, in addition to the
+                    // session-based capture. The form field is a fallback for cases
+                    // where the session cookie doesn't survive the cross-tab nav
+                    // (e.g. SameSite=Strict on the first request, session disabled,
+                    // or the user opened the login page in a new context).
+                    $returnTo = $_SESSION['ledger_login_redirect'] ?? '';
+                    if (!is_string($returnTo)) $returnTo = '';
+                ?>
+                <input type="hidden" name="return_to" value="<?= h($returnTo) ?>">
                 <div class="login-field">
                     <label class="login-label" for="login-user">Username</label>
                     <input type="text" id="login-user" name="username" class="login-input"

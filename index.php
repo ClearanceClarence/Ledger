@@ -90,7 +90,7 @@ if ($auth->isAuthRequired()) {
                 $_POST['password'] ?? ''
             );
             if ($result === true) {
-                header('Location: ?');
+                header('Location: ' . consumeLoginRedirect());
                 exit;
             } elseif ($result === '2fa_required') {
                 // Fall through — will show 2FA form below
@@ -107,7 +107,7 @@ if ($auth->isAuthRequired()) {
         } else {
             $result = $auth->verify2fa($_POST['totp_code'] ?? '');
             if ($result === true) {
-                header('Location: ?');
+                header('Location: ' . consumeLoginRedirect());
                 exit;
             } else {
                 $loginError = $result;
@@ -123,9 +123,81 @@ if ($auth->isAuthRequired()) {
 
     // If not logged in, show login page
     if (!$auth->isLoggedIn()) {
+        // Remember where the user was trying to go, so we can redirect them
+        // back after a successful login. Only the query string is captured —
+        // the path always points at this index.php.
+        //
+        // Captured only on GET (not the login POST itself, which would
+        // overwrite a real target with the action=login fragment).
+        if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+            $query = $_SERVER['QUERY_STRING'] ?? '';
+            if ($query !== '' && safeRedirectTarget($query)) {
+                $_SESSION['ledger_login_redirect'] = $query;
+            }
+        }
         include __DIR__ . '/templates/login.php';
         exit;
     }
+}
+
+/**
+ * Decide whether a stored "redirect-to-after-login" query string is safe to
+ * use. Rejects anything that could trigger an open redirect — fully-qualified
+ * URLs, protocol-relative URLs, schemes, and CRLF injection.
+ *
+ * Accepts only plain query-string content (key=value&key=value with optional
+ * URL-encoded characters). Length is also bounded so a malicious referrer
+ * can't blow up the session.
+ */
+function safeRedirectTarget(string $q): bool {
+    if ($q === '' || strlen($q) > 2048) return false;
+    // No literal control chars (raw bytes)
+    if (preg_match('/[\x00-\x1F\x7F]/', $q)) return false;
+    // No URL-encoded control chars either (defense in depth — a header()
+    // call would decode %0D%0A into CRLF, enabling header injection)
+    if (preg_match('/%(0[0-9a-f]|1[0-9a-f]|7f)/i', $q)) return false;
+    // No scheme markers, no host-relative protocol
+    if (str_contains($q, '://')) return false;
+    if (str_starts_with($q, '//')) return false;
+    if (str_starts_with($q, '/'))  return false; // not a query string
+    // Forbid any 'action=login' or 'action=logout' — we're redirecting
+    // the user *to* their page, not back into the auth flow
+    if (preg_match('/(^|&)action=(login|logout|verify_2fa)(&|$)/', $q)) return false;
+    return true;
+}
+
+/**
+ * Consume the saved login redirect target. Re-validates before use (defense
+ * in depth: the session may have been written from an older code path).
+ * Returns a query-string fragment safe to put after '?' in a Location header.
+ * Falls back to '?' (dashboard) if there's nothing valid to redirect to.
+ *
+ * Sources, in order of preference:
+ *   1. POST 'return_to' — passed via hidden form field on the login form.
+ *      Survives SameSite=Strict session-cookie edge cases where the session
+ *      from the initial capturing GET request doesn't reach the login POST.
+ *   2. $_SESSION['ledger_login_redirect'] — set during the GET that hit the
+ *      protected URL. Works for the common case where the session cookie
+ *      survived the round trip.
+ */
+function consumeLoginRedirect(): string {
+    // Always clear session value, even if we end up using the POST one
+    $sessionTarget = $_SESSION['ledger_login_redirect'] ?? '';
+    unset($_SESSION['ledger_login_redirect']);
+
+    // Prefer the POSTed form field — it's strictly more reliable across
+    // session/cookie edge cases. If it's invalid for any reason, fall through
+    // to the session-stored value.
+    $postTarget = $_POST['return_to'] ?? '';
+    if (is_string($postTarget) && $postTarget !== '' && safeRedirectTarget($postTarget)) {
+        return '?' . $postTarget;
+    }
+
+    if (is_string($sessionTarget) && $sessionTarget !== '' && safeRedirectTarget($sessionTarget)) {
+        return '?' . $sessionTarget;
+    }
+
+    return '?';
 }
 
 // Database Connection
@@ -193,6 +265,18 @@ if ($action && $connected) {
     }
 
     if ($action) {
+        // For any export action, prepare the response for streaming large
+        // output: lift the script time limit, disable internal output
+        // buffering so each echo flushes to the network. Big DB dumps would
+        // otherwise time out or exhaust memory.
+        if (in_array($action, ['export_sql', 'export_csv', 'export_db'], true)) {
+            @set_time_limit(0);
+            // Drain and turn off any active output buffers
+            while (ob_get_level() > 0) { @ob_end_flush(); }
+            // Don't strip the script's time-out from the user's web server —
+            // some hosts (FastCGI, nginx+php-fpm) impose their own limit. The
+            // user will see the export fail there; we can't fix that from PHP.
+        }
         switch ($action) {
             case 'export_sql':
                 if ($currentDb && $currentTable) {
@@ -226,8 +310,11 @@ if ($action && $connected) {
                     echo "SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS = 0;\n\n";
                     if ($mode !== 'data') {
                         echo "DROP TABLE IF EXISTS `{$currentTable}`;\n\n";
+                        echo $dbInstance->getCreateStatement($currentDb, $currentTable) . ";\n\n";
                     }
-                    echo $dbInstance->exportTable($currentDb, $currentTable, $mode);
+                    if ($mode !== 'structure') {
+                        $dbInstance->streamTableData($currentDb, $currentTable);
+                    }
                     echo "\nSET FOREIGN_KEY_CHECKS = 1;\n";
                     exit;
                 }
@@ -235,10 +322,9 @@ if ($action && $connected) {
 
             case 'export_csv':
                 if ($currentDb && $currentTable) {
-                    $csv = $dbInstance->exportTableCsv($currentDb, $currentTable);
                     header('Content-Type: text/csv');
                     header("Content-Disposition: attachment; filename=\"{$currentTable}.csv\"");
-                    echo $csv;
+                    $dbInstance->streamTableCsv($currentDb, $currentTable);
                     exit;
                 }
                 break;
@@ -317,8 +403,11 @@ if ($action && $connected) {
                             echo "-- ---\n\n";
                             if ($mode !== 'data') {
                                 echo "DROP TABLE IF EXISTS `{$tblName}`;\n\n";
+                                echo $dbInstance->getCreateStatement($currentDb, $tblName) . ";\n\n";
                             }
-                            echo $dbInstance->exportTable($currentDb, $tblName, $mode);
+                            if ($mode !== 'structure') {
+                                $dbInstance->streamTableData($currentDb, $tblName);
+                            }
                             echo "\n\n";
                         }
                     } else {
@@ -350,11 +439,11 @@ if ($action && $connected) {
                         if ($mode !== 'structure') {
                             foreach ($tables as $tbl) {
                                 $tblName = $tbl['Name'];
-                                // Use data-only export, skipping CREATE
-                                $dataOnly = $dbInstance->exportTable($currentDb, $tblName, 'data');
-                                if (trim($dataOnly) === '') continue;
+                                // Use the row count from the table metadata to decide whether
+                                // to print the section header. Cheaper than fetching to decide.
+                                if (($tableData[$tblName]['rows'] ?? 0) <= 0) continue;
                                 echo "--\n-- Dumping data for table `{$tblName}`\n--\n\n";
-                                echo $dataOnly;
+                                $dbInstance->streamTableData($currentDb, $tblName);
                                 echo "\n";
                             }
                         }

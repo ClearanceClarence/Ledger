@@ -161,29 +161,121 @@ input, textarea, select, button { font-family: inherit; }
     color: var(--text-muted);
 }
 
-.header-meta { display: flex; gap: 6px; align-items: center; }
-.header-chip {
-    font-size: var(--font-size-xs);
-    color: var(--text-muted);
-    background: var(--bg-panel-alt);
-    padding: 2px 8px;
-    border-radius: var(--radius-sm);
-    font-family: var(--font-mono);
-    border: 1px solid var(--border);
+.header-meta {
+    display: flex;
+    gap: 5px;
+    align-items: center;
 }
-.header-chip.dim { opacity: 0.5; }
 
-.header-chip-btn {
-    cursor: pointer;
-    transition: background 0.1s, color 0.1s, border-color 0.1s;
+/* ── Header chips ────────────────────────────────────────────────────────
+   The cluster of small info pills in the header (server, db version,
+   db count, uptime, PHP version, connected, user). Each chip can take
+   a `--modifier` class to express what kind of info it carries — the
+   modifier shifts the icon color and adds context-appropriate flourishes
+   (e.g. the server chip gets a live status dot, the time chip pulses).
+
+   Surface treatment: transparent base + inset shadow gives a soft
+   "engraved" look at depth, instead of the flat 1px border the chip
+   used to have. The transition lifts on hover for tactile feedback.
+*/
+.header-chip {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 5px;
+    height: 22px;
+    padding: 0 9px;
+    font-size: var(--font-size-xs);
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+    background: var(--bg-panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 999px; /* full pill */
+    line-height: 1;
+    white-space: nowrap;
+    transition: background 140ms ease, border-color 140ms ease,
+                color 140ms ease, transform 140ms ease;
+}
+.header-chip:hover {
+    border-color: var(--border-light);
+    color: var(--text-primary);
+}
+
+/* The icon inside chips inherits color from the chip's --chip-accent
+   variable, which each modifier sets. This means the icon picks up the
+   chip's identity without us having to re-style every <svg>. */
+.header-chip > svg {
+    color: var(--chip-accent, var(--text-muted));
+    flex-shrink: 0;
+    transition: color 140ms ease;
+}
+
+/* Internal separator (e.g. between version and charset) */
+.header-chip-sep {
+    color: var(--text-muted);
+    opacity: 0.6;
+    padding: 0 1px;
+}
+
+.header-chip.dim {
+    opacity: 0.55;
+}
+.header-chip.dim:hover {
+    opacity: 0.85;
+}
+
+/* ── Semantic chip variants ───────────────────────────────────────────
+   Each variant nudges the icon color, signaling at a glance what
+   category of info the chip carries. Text stays neutral so the row
+   reads coherently — only the icon does the coloring.
+*/
+.header-chip--server {
+    --chip-accent: var(--accent);
+}
+.header-chip--db {
+    --chip-accent: var(--info, var(--accent));
+}
+.header-chip--count {
+    --chip-accent: var(--purple, var(--text-secondary));
+}
+.header-chip--time {
+    --chip-accent: var(--warning, var(--text-secondary));
+}
+.header-chip--meta {
+    --chip-accent: var(--text-muted);
+}
+
+/* Live status pulse — sits on the leading edge of the server chip
+   when the connection is healthy. Three-stage breathing animation. */
+.header-chip-pulse {
+    position: relative;
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 0 var(--accent);
+    margin-right: 1px;
+    animation: ledger-chip-pulse 2.8s ease-in-out infinite;
+}
+@keyframes ledger-chip-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 var(--accent); opacity: 0.9; }
+    50%      { box-shadow: 0 0 0 4px transparent;  opacity: 0.5; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .header-chip-pulse { animation: none; }
+}
+
+/* Clickable chips (the username chip is a button) */
+.header-chip-btn {
+    cursor: pointer;
+    font: inherit;
+    line-height: 1;
 }
 .header-chip-btn:hover {
     color: var(--accent);
     border-color: var(--accent-dim);
     background: var(--accent-bg);
+    --chip-accent: var(--accent);
 }
 
 .status-dot {
@@ -192,8 +284,13 @@ input, textarea, select, button { font-family: inherit; }
     border-radius: 50%;
     flex-shrink: 0;
 }
-.status-dot.online { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
-.status-dot.offline { background: var(--danger); }
+.status-dot.online {
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent);
+}
+.status-dot.offline {
+    background: var(--danger);
+}
 
 /* ── Theme Selector ── */
 .theme-select {
