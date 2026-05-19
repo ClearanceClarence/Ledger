@@ -72,6 +72,133 @@ try {
 // Route actions
 switch ($action) {
 
+    // ─── Streaming SQL import ────────────────────────────────────────────
+    // Sends NDJSON (one JSON object per line) so the client can render
+    // a live progress bar. Pre-counts statements once for the denominator,
+    // then streams progress every 250 statements as the import runs.
+    case 'import_stream':
+        // Override the default JSON headers — we're streaming NDJSON.
+        // Disable any output buffering so each progress line reaches the
+        // browser immediately rather than being held until script end.
+        header('Content-Type: application/x-ndjson; charset=utf-8');
+        header('X-Accel-Buffering: no'); // disable nginx buffering if behind it
+        while (ob_get_level() > 0) { @ob_end_flush(); }
+        @ini_set('zlib.output_compression', '0');
+        @set_time_limit(0);
+
+        $emit = function (array $data) {
+            echo json_encode($data) . "\n";
+            @ob_flush();
+            @flush();
+        };
+
+        // Read-only guard
+        if ($auth->isReadOnly()) {
+            $emit(['phase' => 'error', 'error' => 'Import is disabled in read-only mode.']);
+            exit;
+        }
+
+        // File upload validation
+        if (!isset($_FILES['import_file']) || $_FILES['import_file']['error'] !== UPLOAD_ERR_OK) {
+            $uploadErrors = [
+                UPLOAD_ERR_INI_SIZE   => 'File exceeds server upload limit (' . ini_get('upload_max_filesize') . ').',
+                UPLOAD_ERR_FORM_SIZE  => 'File exceeds form upload limit.',
+                UPLOAD_ERR_PARTIAL    => 'File was only partially uploaded.',
+                UPLOAD_ERR_NO_FILE    => 'No file was selected.',
+                UPLOAD_ERR_NO_TMP_DIR => 'Server missing temp directory.',
+                UPLOAD_ERR_CANT_WRITE => 'Failed to write file to disk.',
+            ];
+            $errCode = $_FILES['import_file']['error'] ?? UPLOAD_ERR_NO_FILE;
+            $emit(['phase' => 'error', 'error' => $uploadErrors[$errCode] ?? 'Upload failed (code ' . $errCode . ').']);
+            exit;
+        }
+
+        $filePath = $_FILES['import_file']['tmp_name'];
+        $fileName = $_FILES['import_file']['name'];
+        $fileSize = $_FILES['import_file']['size'];
+
+        // Target DB
+        $sqlTarget = $_POST['sql_target'] ?? 'existing';
+        $targetDb = null;
+        if ($sqlTarget === 'existing') {
+            $targetDb = $_POST['target_db'] ?? $db ?? '';
+            if (!$targetDb) {
+                $emit(['phase' => 'error', 'error' => 'No target database selected.']);
+                exit;
+            }
+            if ($auth->isDatabaseHidden($targetDb)) {
+                $emit(['phase' => 'error', 'error' => 'Access denied.']);
+                exit;
+            }
+        }
+
+        // Phase 1: pre-count statements for the progress denominator.
+        // Wrapped in try in case the file disappears or read errors out.
+        $emit(['phase' => 'counting', 'file' => $fileName, 'size' => $fileSize]);
+        try {
+            $totalEstimate = $dbInstance->countStatementsInFile($filePath);
+        } catch (Exception $e) {
+            $emit(['phase' => 'error', 'error' => 'Could not pre-scan file: ' . $e->getMessage()]);
+            exit;
+        }
+        $emit(['phase' => 'counted', 'estimate' => $totalEstimate]);
+
+        // Phase 2: run the import, streaming progress every 250 statements
+        // Fast mode is on by default per UI; user can opt out via the checkbox.
+        $fast = !isset($_POST['fast']) || $_POST['fast'] !== '0';
+        $startTime = microtime(true);
+        $lastEmit = $startTime;
+        try {
+            $aggregate = $dbInstance->executeSqlDumpFromFile(
+                $targetDb,
+                $filePath,
+                function (array $running) use ($emit, $startTime, &$lastEmit, $totalEstimate) {
+                    // Rate-limit emissions to at most ~10/sec so we don't
+                    // saturate the network on tiny dumps that finish fast.
+                    $now = microtime(true);
+                    if (($now - $lastEmit) < 0.1) return;
+                    $lastEmit = $now;
+
+                    $emit([
+                        'phase'    => 'progress',
+                        'total'    => $running['total'],
+                        'success'  => $running['success'],
+                        'errors'   => $running['errors'],
+                        'rows'     => $running['rows'],
+                        'estimate' => $totalEstimate,
+                        'elapsed'  => $now - $startTime,
+                    ]);
+                },
+                250,    // progressEvery
+                $fast
+            );
+        } catch (RuntimeException $e) {
+            $emit(['phase' => 'error', 'error' => $e->getMessage()]);
+            exit;
+        }
+
+        // Phase 3: done
+        $elapsed = microtime(true) - $startTime;
+        $label = $targetDb ? "into {$targetDb}" : "(new database from file)";
+        $auth->logActivity("SQL import: {$fileName} ({$fileSize} bytes) {$label} — {$aggregate['success']} OK, {$aggregate['errors']} errors");
+
+        $emit([
+            'phase'      => 'done',
+            'file'       => $fileName,
+            'size'       => $fileSize,
+            'target'     => $targetDb ?? '(from file)',
+            'statements' => $aggregate['statements'],
+            'success'    => $aggregate['success'],
+            'errors'     => $aggregate['errors'],
+            'rows'       => $aggregate['rows'],
+            'total'      => $aggregate['total'],
+            'truncated'  => $aggregate['truncated'],
+            'aborted'    => $aggregate['aborted'] ?? false,
+            'fast'       => $aggregate['fast'] ?? false,
+            'time'       => $elapsed,
+        ]);
+        exit;
+
     // Autocomplete data (GET, read-only safe)
     case 'autocomplete':
         $result = [

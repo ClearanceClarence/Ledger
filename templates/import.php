@@ -26,10 +26,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isReadOnly) {
             $filePath = $_FILES['import_file']['tmp_name'];
             $fileName = $_FILES['import_file']['name'];
             $fileSize = $_FILES['import_file']['size'];
-            $content = file_get_contents($filePath);
 
             if ($importType === 'sql') {
-                // SQL Import
+                // SQL Import — stream directly from the uploaded temp file
+                // so memory stays bounded regardless of dump size.
                 $sqlTarget = $_POST['sql_target'] ?? 'existing';
                 $targetDb = null;
 
@@ -42,34 +42,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isReadOnly) {
                 // sqlTarget === 'new' → targetDb stays null, file must contain CREATE DATABASE / USE
 
                 if (!isset($importResults['error'])) {
+                    // Lift PHP's time limit for the duration of the import. Large
+                    // dumps can easily exceed the default 30 seconds.
+                    @set_time_limit(0);
+
+                    // Same fast-mode toggle as the streaming path
+                    $fast = !isset($_POST['fast']) || $_POST['fast'] !== '0';
                     $start = microtime(true);
-                    $results = $dbInstance->executeSqlDump($targetDb, $content);
+                    try {
+                        $aggregate = $dbInstance->executeSqlDumpFromFile($targetDb, $filePath, null, 250, $fast);
+                    } catch (\RuntimeException $e) {
+                        $importResults = ['error' => 'Import failed: ' . $e->getMessage()];
+                        $aggregate = null;
+                    }
                     $elapsed = microtime(true) - $start;
 
-                    $successCount = count(array_filter($results, fn($r) => $r['success']));
-                    $errorCount = count(array_filter($results, fn($r) => !$r['success']));
-                    $totalRows = array_sum(array_map(fn($r) => $r['rows'] ?? 0, $results));
+                    if ($aggregate !== null) {
+                        $label = $targetDb ? "into {$targetDb}" : "(new database from file)";
+                        if (isset($auth)) {
+                            $auth->logActivity("SQL import: {$fileName} ({$fileSize} bytes) {$label} — {$aggregate['success']} OK, {$aggregate['errors']} errors");
+                        }
 
-                    $label = $targetDb ? "into {$targetDb}" : "(new database from file)";
-                    if (isset($auth)) {
-                        $auth->logActivity("SQL import: {$fileName} ({$fileSize} bytes) {$label} — {$successCount} OK, {$errorCount} errors");
+                        $importResults = [
+                            'type'       => 'sql',
+                            'file'       => $fileName,
+                            'size'       => $fileSize,
+                            'target'     => $targetDb ?? '(from file)',
+                            'statements' => $aggregate['statements'],
+                            'success'    => $aggregate['success'],
+                            'errors'     => $aggregate['errors'],
+                            'rows'       => $aggregate['rows'],
+                            'total'      => $aggregate['total'],
+                            'truncated'  => $aggregate['truncated'],
+                            'aborted'    => $aggregate['aborted'] ?? false,
+                            'fast'       => $aggregate['fast'] ?? false,
+                            'time'       => $elapsed,
+                        ];
                     }
-
-                    $importResults = [
-                        'type'       => 'sql',
-                        'file'       => $fileName,
-                        'size'       => $fileSize,
-                        'target'     => $targetDb ?? '(from file)',
-                        'statements' => $results,
-                        'success'    => $successCount,
-                        'errors'     => $errorCount,
-                        'rows'       => $totalRows,
-                        'time'       => $elapsed,
-                    ];
                 }
 
             } elseif ($importType === 'csv') {
-                // CSV Import
+                // CSV Import — for now we still read the whole file (importCsv()
+                // is a candidate for the same streaming treatment as SQL, but
+                // CSVs in this product tend to be smaller in practice).
                 $targetDb = $_POST['target_db'] ?? $currentDb;
                 $targetTable = $_POST['target_table'] ?? '';
                 if (!$targetDb || !$targetTable) {
@@ -82,6 +97,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isReadOnly) {
                         'skip_errors' => true,
                     ];
 
+                    @set_time_limit(0);
+                    $content = file_get_contents($filePath);
                     $start = microtime(true);
                     $result = $dbInstance->importCsv($targetDb, $targetTable, $content, $options);
                     $elapsed = microtime(true) - $start;
@@ -147,6 +164,13 @@ if ($currentDb) {
             </div>
         </div>
         <div class="import-result-body">
+            <?php if (!empty($importResults['fast']) && !empty($importResults['aborted'])): ?>
+            <div class="import-result-aborted">
+                <strong>Import aborted.</strong> Fast mode was on, so the failing table's transaction was rolled back.
+                Tables committed before the failure (at the previous CREATE/DROP/ALTER boundary) remain in place.
+                Re-running the import will re-import everything. To get per-statement isolation instead, turn off Fast mode.
+            </div>
+            <?php endif; ?>
             <div class="import-result-stats">
                 <div class="import-stat">
                     <span class="import-stat-val accent"><?= $importResults['success'] ?></span>
@@ -174,10 +198,19 @@ if ($currentDb) {
 
             <?php
             $errorStmts = array_filter($importResults['statements'], fn($r) => !$r['success']);
-            if (!empty($errorStmts)): ?>
+            if (!empty($errorStmts)):
+                $totalErrors = $importResults['errors'];
+                $shownErrors = count($errorStmts);
+                $isTruncated = $totalErrors > $shownErrors;
+            ?>
             <details class="import-errors-detail" style="margin-top:12px;">
                 <summary style="cursor:pointer;color:var(--danger);font-size:var(--font-size-sm);font-weight:600;">
-                    <?= icon('alert-triangle', 12) ?> <?= count($errorStmts) ?> failed statement<?= count($errorStmts) > 1 ? 's' : '' ?>
+                    <?= icon('alert-triangle', 12) ?>
+                    <?php if ($isTruncated): ?>
+                        Showing first <?= $shownErrors ?> of <?= $totalErrors ?> failed statement<?= $totalErrors > 1 ? 's' : '' ?>
+                    <?php else: ?>
+                        <?= $shownErrors ?> failed statement<?= $shownErrors > 1 ? 's' : '' ?>
+                    <?php endif; ?>
                 </summary>
                 <div class="table-wrapper" style="margin-top:8px;">
                     <table class="data-table">
@@ -257,7 +290,7 @@ if ($currentDb) {
                 <div class="import-section-desc">Upload a <code>.sql</code> file. Supports full database dumps with <code>CREATE DATABASE</code> or table-level imports into an existing database.</div>
             </div>
         </div>
-        <form method="post" enctype="multipart/form-data" class="import-form">
+        <form method="post" enctype="multipart/form-data" class="import-form" id="sql-form" data-stream-import="1">
             <?php if (isset($auth)): ?><?= $auth->csrfField() ?><?php endif; ?>
             <input type="hidden" name="import_type" value="sql">
 
@@ -322,6 +355,20 @@ if ($currentDb) {
                 <pre class="sql-preview-body" id="sql-preview-body"></pre>
             </div>
 
+            <!-- Fast mode toggle — wraps INSERTs in transactions for ~10-20x speedup.
+                 Default ON. Documented behavior: rolls back the current
+                 transaction on error and stops the import. Tables committed
+                 before the failure (at the previous DDL boundary) remain. -->
+            <label class="import-fast-toggle">
+                <input type="checkbox" name="fast" value="1" checked id="sql-fast-toggle">
+                <span class="import-fast-label">
+                    <strong>Fast mode</strong>
+                    <span class="import-fast-desc">
+                        Wraps inserts in transactions and disables foreign-key / unique checks during the import. Much faster on large dumps (often 10–20×). On error, the current table rolls back and the import stops.
+                    </span>
+                </span>
+            </label>
+
             <div class="import-form-footer">
                 <div class="import-target">
                     <?= icon('upload', 13) ?>
@@ -332,6 +379,22 @@ if ($currentDb) {
                 </button>
             </div>
         </form>
+
+        <!-- Live progress UI — shown only during a streaming import -->
+        <div class="import-progress" id="sql-progress" style="display:none;">
+            <div class="import-progress-row">
+                <div class="import-progress-phase" id="sql-progress-phase">Preparing…</div>
+                <div class="import-progress-elapsed" id="sql-progress-elapsed"></div>
+            </div>
+            <div class="import-progress-bar-track">
+                <div class="import-progress-bar-fill" id="sql-progress-fill" style="width:0"></div>
+                <div class="import-progress-bar-indeterminate" id="sql-progress-indeterminate" style="display:none;"></div>
+            </div>
+            <div class="import-progress-stats" id="sql-progress-stats"></div>
+        </div>
+
+        <!-- Inline result card rendered from the streamed result -->
+        <div class="import-stream-result" id="sql-stream-result" style="display:none;"></div>
     </div>
 
     <!-- CSV Import (requires db) -->
@@ -520,6 +583,298 @@ document.addEventListener('DOMContentLoaded', function() {
             body.style.display = collapsed ? '' : 'none';
             toggleBtn.style.transform = collapsed ? '' : 'rotate(-90deg)';
         });
+    }
+
+    // ─── Streaming SQL Import ─────────────────────────────────────────
+    // Intercepts the SQL form submit, uploads via XHR (for upload progress),
+    // and parses NDJSON progress events as they stream in. Falls back to
+    // the regular form POST if anything goes wrong before the request even
+    // starts (no file, no JS support for FormData, etc.)
+    var sqlForm = document.getElementById('sql-form');
+    if (sqlForm && window.FormData && window.XMLHttpRequest) {
+        sqlForm.addEventListener('submit', function(evt) {
+            // Only intercept if a file is actually selected — let the form
+            // submit normally so HTML5 required-field validation works.
+            var fileInput = document.getElementById('sql-file-input');
+            if (!fileInput || !fileInput.files.length) return;
+
+            evt.preventDefault();
+            runStreamingImport(sqlForm);
+        });
+    }
+
+    function runStreamingImport(form) {
+        var progressEl  = document.getElementById('sql-progress');
+        var phaseEl     = document.getElementById('sql-progress-phase');
+        var elapsedEl   = document.getElementById('sql-progress-elapsed');
+        var fillEl      = document.getElementById('sql-progress-fill');
+        var indetEl     = document.getElementById('sql-progress-indeterminate');
+        var statsEl     = document.getElementById('sql-progress-stats');
+        var resultEl    = document.getElementById('sql-stream-result');
+        var submitBtn   = form.querySelector('button[type="submit"]');
+
+        // Reset UI
+        progressEl.style.display = '';
+        resultEl.style.display = 'none';
+        resultEl.innerHTML = '';
+        fillEl.style.width = '0';
+        indetEl.style.display = 'none';
+        phaseEl.textContent = 'Uploading…';
+        elapsedEl.textContent = '';
+        statsEl.textContent = '';
+
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.dataset.originalText = submitBtn.innerHTML;
+            submitBtn.innerHTML = 'Importing…';
+        }
+
+        var fd = new FormData(form);
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', 'ajax.php?action=import_stream', true);
+
+        // Track bytes already consumed from xhr.responseText. NDJSON lines
+        // arrive incrementally and we parse them as soon as we have a
+        // complete line.
+        var consumed = 0;
+        var buffer = '';
+        var startTime = Date.now();
+        var importStarted = false;
+
+        // ─── Upload phase ────────────────────────────────────────────
+        xhr.upload.addEventListener('progress', function(e) {
+            if (!e.lengthComputable) return;
+            var pct = Math.floor(e.loaded / e.total * 100);
+            fillEl.style.width = pct + '%';
+            phaseEl.textContent = 'Uploading';
+            statsEl.textContent =
+                formatBytes(e.loaded) + ' / ' + formatBytes(e.total) +
+                ' (' + pct + '%)';
+            elapsedEl.textContent = formatElapsed((Date.now() - startTime) / 1000);
+        });
+
+        xhr.upload.addEventListener('load', function() {
+            // Upload's done; server is now processing
+            phaseEl.textContent = 'Counting statements…';
+            statsEl.textContent = '';
+            fillEl.style.width = '0';
+            indetEl.style.display = '';
+            importStarted = true;
+        });
+
+        // ─── Streaming response phase ────────────────────────────────
+        // 'progress' fires as response bytes arrive. We re-slice
+        // xhr.responseText from where we last parsed, append to our
+        // buffer, and process complete newline-delimited JSON lines.
+        xhr.addEventListener('progress', function() {
+            var fresh = xhr.responseText.substring(consumed);
+            consumed = xhr.responseText.length;
+            buffer += fresh;
+
+            var newlineIdx;
+            while ((newlineIdx = buffer.indexOf('\n')) >= 0) {
+                var line = buffer.substring(0, newlineIdx).trim();
+                buffer = buffer.substring(newlineIdx + 1);
+                if (line === '') continue;
+                try {
+                    var msg = JSON.parse(line);
+                    handleProgressEvent(msg);
+                } catch (e) {
+                    // Malformed line — ignore and keep going
+                }
+            }
+        });
+
+        xhr.addEventListener('load', function() {
+            // Process anything left in the buffer (rare — server usually
+            // ends with a newline) and re-enable the submit button.
+            if (buffer.trim() !== '') {
+                try { handleProgressEvent(JSON.parse(buffer.trim())); } catch (e) {}
+            }
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                if (submitBtn.dataset.originalText) {
+                    submitBtn.innerHTML = submitBtn.dataset.originalText;
+                }
+            }
+        });
+
+        xhr.addEventListener('error', function() {
+            showStreamError('Network error during import. Please try again.');
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                if (submitBtn.dataset.originalText) {
+                    submitBtn.innerHTML = submitBtn.dataset.originalText;
+                }
+            }
+        });
+
+        xhr.send(fd);
+
+        // ─── Event dispatch ─────────────────────────────────────────
+        function handleProgressEvent(msg) {
+            if (msg.phase === 'counting') {
+                phaseEl.textContent = 'Counting statements…';
+                indetEl.style.display = '';
+                fillEl.style.width = '0';
+                statsEl.textContent = msg.file
+                    ? msg.file + ' · ' + formatBytes(msg.size)
+                    : '';
+            }
+            else if (msg.phase === 'counted') {
+                indetEl.style.display = 'none';
+                phaseEl.textContent = 'Importing';
+                statsEl.textContent =
+                    '0 / ' + msg.estimate.toLocaleString() + ' statements';
+            }
+            else if (msg.phase === 'progress') {
+                indetEl.style.display = 'none';
+                var pct = msg.estimate > 0
+                    ? Math.min(100, Math.floor(msg.total / msg.estimate * 100))
+                    : 0;
+                fillEl.style.width = pct + '%';
+                phaseEl.textContent = 'Importing';
+
+                var parts = [
+                    msg.total.toLocaleString() +
+                        (msg.estimate ? ' / ' + msg.estimate.toLocaleString() : '') +
+                        ' statements'
+                ];
+                if (msg.errors > 0) {
+                    parts.push('<span class="stat-error">' +
+                        msg.errors.toLocaleString() + ' error' +
+                        (msg.errors === 1 ? '' : 's') + '</span>');
+                }
+                statsEl.innerHTML = parts.join('<span class="stat-divider">·</span>');
+                elapsedEl.textContent = formatElapsed(msg.elapsed);
+            }
+            else if (msg.phase === 'done') {
+                indetEl.style.display = 'none';
+                fillEl.style.width = '100%';
+                phaseEl.textContent = 'Done';
+                statsEl.innerHTML =
+                    msg.total.toLocaleString() + ' statements' +
+                    '<span class="stat-divider">·</span>' +
+                    msg.success.toLocaleString() + ' ok' +
+                    (msg.errors > 0
+                        ? '<span class="stat-divider">·</span><span class="stat-error">' +
+                          msg.errors.toLocaleString() + ' errors</span>'
+                        : '');
+                elapsedEl.textContent = formatElapsed(msg.time);
+                renderStreamResult(msg);
+            }
+            else if (msg.phase === 'error') {
+                showStreamError(msg.error || 'Unknown error');
+            }
+        }
+
+        // ─── Final result card (inline render of $importResults) ────
+        function renderStreamResult(msg) {
+            var hasErrors = msg.errors > 0;
+            var errorStmts = (msg.statements || []).filter(function(s) {
+                return !s.success;
+            });
+
+            var html = '';
+            html += '<div class="import-result-card ' +
+                (hasErrors ? 'import-result-warn' : 'import-result-ok') + '">';
+            html += '<div class="import-result-header">';
+            html += '<div class="import-result-title">SQL Import ' +
+                (hasErrors ? 'Completed with Errors' : 'Successful') +
+                ' — <strong>' + escapeHtml(msg.target) + '</strong></div>';
+            html += '</div>';
+            html += '<div class="import-result-body">';
+
+            // Fast mode + aborted warning (rolled back current transaction)
+            if (msg.fast && msg.aborted) {
+                html += '<div class="import-result-aborted">';
+                html += '<strong>Import aborted.</strong> Fast mode was on, so the failing table\'s transaction was rolled back. ' +
+                    'Tables committed before the failure (at the previous CREATE/DROP/ALTER boundary) remain in place. ' +
+                    'Re-running the import will re-import everything. To get per-statement isolation instead, turn off Fast mode.';
+                html += '</div>';
+            }
+
+            html += '<div class="import-result-stats">';
+            html += '<div class="import-stat">' +
+                '<span class="import-stat-val accent">' + msg.success.toLocaleString() +
+                '</span><span class="import-stat-lbl">Statements OK</span></div>';
+            if (hasErrors) {
+                html += '<div class="import-stat">' +
+                    '<span class="import-stat-val" style="color:var(--danger);">' +
+                    msg.errors.toLocaleString() +
+                    '</span><span class="import-stat-lbl">Errors</span></div>';
+            }
+            html += '<div class="import-stat">' +
+                '<span class="import-stat-val info">' + msg.rows.toLocaleString() +
+                '</span><span class="import-stat-lbl">Rows Affected</span></div>';
+            html += '<div class="import-stat">' +
+                '<span class="import-stat-val muted">' + msg.time.toFixed(3) + 's' +
+                '</span><span class="import-stat-lbl">Duration</span></div>';
+            html += '<div class="import-stat">' +
+                '<span class="import-stat-val muted">' + formatBytes(msg.size) +
+                '</span><span class="import-stat-lbl">' + escapeHtml(msg.file) +
+                '</span></div>';
+            html += '</div>';
+
+            if (errorStmts.length > 0) {
+                var isTrunc = msg.errors > errorStmts.length;
+                html += '<details class="import-errors-detail" style="margin-top:12px;">';
+                html += '<summary style="cursor:pointer;color:var(--danger);font-size:var(--font-size-sm);font-weight:600;">';
+                html += isTrunc
+                    ? 'Showing first ' + errorStmts.length + ' of ' +
+                      msg.errors.toLocaleString() + ' failed statements'
+                    : errorStmts.length + ' failed statement' +
+                      (errorStmts.length === 1 ? '' : 's');
+                html += '</summary>';
+                html += '<div style="margin-top:8px;font-family:var(--font-mono);font-size:var(--font-size-xs);">';
+                errorStmts.forEach(function(s) {
+                    html += '<div style="margin:6px 0;padding:8px;background:var(--bg-input);border-left:2px solid var(--danger);border-radius:var(--radius-sm);">';
+                    html += '<div style="color:var(--text-secondary);">' + escapeHtml(s.sql) + '</div>';
+                    html += '<div style="color:var(--danger);margin-top:4px;">' + escapeHtml(s.error || '') + '</div>';
+                    html += '</div>';
+                });
+                html += '</div></details>';
+            }
+
+            html += '</div></div>';
+            resultEl.innerHTML = html;
+            resultEl.style.display = '';
+            // Hide the progress bar once results are shown — the result card
+            // now carries all the same info
+            setTimeout(function() { progressEl.style.display = 'none'; }, 800);
+        }
+
+        function showStreamError(err) {
+            indetEl.style.display = 'none';
+            fillEl.style.width = '0';
+            phaseEl.textContent = 'Error';
+            statsEl.innerHTML = '';
+            resultEl.innerHTML =
+                '<div class="error-box">' + escapeHtml(err) + '</div>';
+            resultEl.style.display = '';
+            progressEl.style.display = 'none';
+        }
+    }
+
+    function formatBytes(n) {
+        if (n < 1024) return n + ' B';
+        if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+        if (n < 1024*1024*1024) return (n/(1024*1024)).toFixed(1) + ' MB';
+        return (n/(1024*1024*1024)).toFixed(2) + ' GB';
+    }
+    function formatElapsed(seconds) {
+        var s = Math.floor(seconds);
+        if (s < 60) return s + 's';
+        var m = Math.floor(s / 60);
+        var rs = s % 60;
+        return m + 'm ' + (rs < 10 ? '0' : '') + rs + 's';
+    }
+    function escapeHtml(s) {
+        if (s == null) return '';
+        return String(s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 });
 

@@ -928,9 +928,37 @@ class Database
      */
     public function splitSqlStatements(string $sql): array
     {
+        [$statements, $remainder, $_delim] = $this->splitSqlStatementsStreaming($sql, ';');
+        // Tail (any statement without trailing delimiter)
+        $trimmed = trim($remainder);
+        if ($trimmed !== '') {
+            $statements[] = $trimmed;
+        }
+        // Drop entries that are only comments and whitespace
+        return array_values(array_filter($statements, function ($s) {
+            return !$this->isOnlyCommentsAndWhitespace($s);
+        }));
+    }
+
+    /**
+     * Streaming-friendly variant of splitSqlStatements().
+     *
+     * Parses as much of $sql as possible into complete statements (terminated
+     * by the current delimiter). Anything left over — an unterminated
+     * statement-in-progress at end of input — is returned as $remainder, to
+     * be prepended to the next chunk.
+     *
+     * Returns [array $completeStatements, string $remainder, string $delimiter].
+     * The returned $delimiter reflects any DELIMITER directives encountered;
+     * pass it back in on the next call to continue with that delimiter.
+     *
+     * Note: this method is the underlying parser. The non-streaming wrapper
+     * splitSqlStatements() flushes the remainder as a final statement.
+     */
+    public function splitSqlStatementsStreaming(string $sql, string $delimiter = ';'): array
+    {
         $statements = [];
         $current = '';
-        $delimiter = ';';
         $len = strlen($sql);
         $i = 0;
 
@@ -938,7 +966,11 @@ class Database
             // Check for DELIMITER directive at start of line (whitespace-only before it)
             if ($this->isDelimiterDirectiveHere($sql, $i)) {
                 $endOfLine = strpos($sql, "\n", $i);
-                $line = $endOfLine === false ? substr($sql, $i) : substr($sql, $i, $endOfLine - $i);
+                if ($endOfLine === false) {
+                    // The DELIMITER line is incomplete — wait for more input
+                    break;
+                }
+                $line = substr($sql, $i, $endOfLine - $i);
                 $newDelim = trim(preg_replace('/^DELIMITER\s+/i', '', $line));
                 if ($newDelim !== '') {
                     // Flush any pending statement before changing delimiter
@@ -949,68 +981,77 @@ class Database
                     $current = '';
                     $delimiter = $newDelim;
                 }
-                $i = $endOfLine === false ? $len : $endOfLine + 1;
+                $i = $endOfLine + 1;
                 continue;
             }
 
             $c = $sql[$i];
             $next = $i + 1 < $len ? $sql[$i + 1] : '';
 
-            // Line comments
+            // Line comments — must reach end of line; if not present, stop and re-buffer
             if ($c === '-' && $next === '-' && ($i + 2 >= $len || ctype_space($sql[$i + 2]) || $sql[$i + 2] === "\n")) {
                 $eol = strpos($sql, "\n", $i);
-                $end = $eol === false ? $len : $eol;
-                $current .= substr($sql, $i, $end - $i);
-                $i = $end;
+                if ($eol === false) break; // wait for more input
+                $current .= substr($sql, $i, $eol - $i);
+                $i = $eol;
                 continue;
             }
             if ($c === '#') {
                 $eol = strpos($sql, "\n", $i);
-                $end = $eol === false ? $len : $eol;
-                $current .= substr($sql, $i, $end - $i);
-                $i = $end;
+                if ($eol === false) break; // wait for more input
+                $current .= substr($sql, $i, $eol - $i);
+                $i = $eol;
                 continue;
             }
 
-            // Block comments
+            // Block comments — must find */; if not present, stop and re-buffer
             if ($c === '/' && $next === '*') {
                 $closeAt = strpos($sql, '*/', $i + 2);
-                $end = $closeAt === false ? $len : $closeAt + 2;
+                if ($closeAt === false) break; // wait for more input
+                $end = $closeAt + 2;
                 $current .= substr($sql, $i, $end - $i);
                 $i = $end;
                 continue;
             }
 
-            // Strings (single, double, backtick) — preserve verbatim
+            // Strings — must find closing quote; if not present, stop and re-buffer
             if ($c === "'" || $c === '"' || $c === '`') {
                 $quote = $c;
+                $stringComplete = false;
+                $savedI = $i;
+                $savedCurrent = $current;
                 $current .= $c;
                 $i++;
                 while ($i < $len) {
                     $ch = $sql[$i];
                     $current .= $ch;
                     if ($ch === '\\' && $i + 1 < $len) {
-                        // Escaped char — preserve the next byte literally
                         $current .= $sql[$i + 1];
                         $i += 2;
                         continue;
                     }
                     if ($ch === $quote) {
-                        // Check for doubled quote (escape via duplication)
                         if ($i + 1 < $len && $sql[$i + 1] === $quote) {
                             $current .= $sql[$i + 1];
                             $i += 2;
                             continue;
                         }
                         $i++;
+                        $stringComplete = true;
                         break;
                     }
                     $i++;
                 }
+                if (!$stringComplete) {
+                    // String runs off end of input — rewind and wait for more
+                    $i = $savedI;
+                    $current = $savedCurrent;
+                    break;
+                }
                 continue;
             }
 
-            // Delimiter match (substring at i)
+            // Delimiter match
             if ($this->matchesDelimiter($sql, $i, $delimiter)) {
                 $trimmed = trim($current);
                 if ($trimmed !== '') {
@@ -1021,22 +1062,23 @@ class Database
                 continue;
             }
 
+            // Partial delimiter at end of buffer? If $sql[$i:] is a prefix of
+            // $delimiter, stop and re-buffer — we can't tell yet if it'll match.
+            if (strlen($delimiter) > 1 && $i + strlen($delimiter) > $len) {
+                $tail = substr($sql, $i);
+                if (strpos($delimiter, $tail) === 0) {
+                    break; // partial match — wait for more input
+                }
+            }
+
             $current .= $c;
             $i++;
         }
 
-        // Tail (any statement without trailing delimiter)
-        $trimmed = trim($current);
-        if ($trimmed !== '') {
-            $statements[] = $trimmed;
-        }
-
-        // Drop entries that are only comments and whitespace
-        $statements = array_values(array_filter($statements, function ($s) {
-            return !$this->isOnlyCommentsAndWhitespace($s);
-        }));
-
-        return $statements;
+        // Anything we didn't consume goes into the remainder, including the
+        // in-progress $current and any unread portion of the input.
+        $remainder = $current . substr($sql, $i);
+        return [$statements, $remainder, $delimiter];
     }
 
     /**
@@ -1220,13 +1262,19 @@ class Database
      * Stream a table's data as INSERT statements directly to PHP output.
      * Returns the number of rows written.
      *
-     * Unlike exportTable(), this method:
-     *   - Uses an unbuffered query (one row at a time, constant memory)
-     *   - echoes each INSERT directly instead of building a string
-     *   - flushes the output buffer every CHUNK rows so the browser sees progress
+     * Rows are batched into multi-row INSERT statements (form:
+     * `INSERT INTO t (cols) VALUES (...),(...),(...);`) which:
+     *   - Reduces statement count by ~500x vs one-INSERT-per-row
+     *   - Cuts file size meaningfully (one boilerplate prefix per ~500 rows)
+     *   - Makes the resulting dump far faster to import
      *
-     * Use this for the data portion of any export that could be large.
-     * For structure-only output (small, bounded), exportTable() is fine.
+     * Batch boundary: every 500 rows OR ~4 MB of accumulated VALUES (whichever
+     * comes first). The 4 MB cap leaves headroom under MySQL's default
+     * max_allowed_packet (64 MB on modern servers, but often 4-16 MB on
+     * shared hosts).
+     *
+     * Memory profile is still constant — the cursor is unbuffered and the
+     * accumulator never exceeds the batch threshold.
      *
      * @return int Number of rows written
      */
@@ -1243,35 +1291,57 @@ class Database
         // run on the same connection. We restore buffered mode in finally.
         $pdo->setAttribute(PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, false);
 
+        // Batch tuning
+        $MAX_ROWS_PER_INSERT  = 500;
+        $MAX_BYTES_PER_INSERT = 4 * 1024 * 1024; // 4 MB safety cap
+
         $count = 0;
-        $flushEvery = 200; // tune: trade off browser-visible progress vs syscall cost
+        $batchRows = [];        // accumulated value tuples for the current INSERT
+        $batchBytes = 0;        // approximate bytes in $batchRows
+        $insertPrefix = '';     // "INSERT INTO `t` (`a`, `b`) VALUES " (set on first row)
+
+        // Helper: flush the current batch to output, then reset
+        $flushBatch = function () use (&$batchRows, &$batchBytes, &$insertPrefix) {
+            if (empty($batchRows)) return;
+            echo $insertPrefix . "\n  " . implode(",\n  ", $batchRows) . ";\n";
+            $batchRows = [];
+            $batchBytes = 0;
+            @ob_flush();
+            @flush();
+        };
 
         try {
             $stmt = $pdo->query("SELECT * FROM {$tableSafe}");
-            $columns = null;
-            $colList = '';
 
             while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-                if ($columns === null) {
+                if ($insertPrefix === '') {
                     $columns = array_keys($row);
                     $colList = implode('`, `', $columns);
+                    $insertPrefix = "INSERT INTO {$tableSafe} (`{$colList}`) VALUES";
                 }
 
+                // Build the (...) tuple for this row
                 $values = [];
                 foreach ($row as $val) {
                     $values[] = $val === null ? 'NULL' : $pdo->quote($val);
                 }
-                echo "INSERT INTO {$tableSafe} (`{$colList}`) VALUES (" . implode(', ', $values) . ");\n";
-                $count++;
+                $tuple = '(' . implode(', ', $values) . ')';
 
-                // Push bytes to the browser periodically so the user sees
-                // the download progress bar grow, instead of staring at a
-                // spinner for two minutes.
-                if (($count % $flushEvery) === 0) {
-                    @ob_flush();
-                    @flush();
+                // Flush before adding if this row would push us over either limit
+                if (
+                    count($batchRows) >= $MAX_ROWS_PER_INSERT ||
+                    ($batchBytes + strlen($tuple) + 2) > $MAX_BYTES_PER_INSERT
+                ) {
+                    $flushBatch();
                 }
+
+                $batchRows[] = $tuple;
+                $batchBytes += strlen($tuple) + 2; // +2 for ",\n"
+                $count++;
             }
+
+            // Flush trailing partial batch
+            $flushBatch();
             $stmt->closeCursor();
         } finally {
             // Always restore buffered mode — if we leave it unbuffered, the
@@ -1830,6 +1900,288 @@ class Database
         }
 
         return $results;
+    }
+
+    /**
+     * Stream a SQL dump from a file on disk, executing each statement as it
+     * is parsed. Memory stays roughly constant regardless of file size.
+     *
+     * Counters track success/failure totals; the returned $statements array
+     * is *capped* — only the first MAX_KEPT_SUCCESS successful statement
+     * previews and the first MAX_KEPT_ERRORS errored statements are kept,
+     * because returning 1M result entries would defeat the whole purpose.
+     *
+     * Returns an array shaped like executeSqlDump()'s response but with extra
+     * aggregate fields: 'total', 'kept', 'truncated', and 'aborted' (only
+     * present in fast mode if the import was rolled back due to error).
+     *
+     * The optional $onProgress callback is invoked roughly every
+     * $progressEvery statements with an array of running stats. Use it to
+     * stream progress to the client without buffering the whole result.
+     *
+     * Fast mode ($fast=true):
+     *   - Wraps batches of DML (INSERT/UPDATE/DELETE/REPLACE) in transactions,
+     *     committing whenever a DDL statement (CREATE/ALTER/DROP/TRUNCATE/etc.)
+     *     is encountered or at end-of-file
+     *   - Disables foreign_key_checks and unique_checks for the duration
+     *   - On any SQL error, ROLLBACKs the current open transaction and aborts.
+     *     Any earlier transactions (committed before previous DDL) remain.
+     *   - Speedup is roughly 5-20x for INSERT-heavy dumps, primarily by
+     *     replacing per-statement fsyncs with one fsync per transaction.
+     *
+     * Throws RuntimeException if the file cannot be opened.
+     */
+    public function executeSqlDumpFromFile(
+        ?string $database,
+        string $filePath,
+        ?callable $onProgress = null,
+        int $progressEvery = 250,
+        bool $fast = false
+    ): array {
+        $pdo = $this->connect($database);
+
+        $fh = @fopen($filePath, 'rb');
+        if (!$fh) {
+            throw new RuntimeException('Could not open import file for reading');
+        }
+
+        // Caps on per-statement detail kept in memory — tuned for what's
+        // displayable in the result UI without overwhelming it.
+        $MAX_KEPT_SUCCESS = 50;
+        $MAX_KEPT_ERRORS  = 100;
+        $READ_CHUNK_BYTES = 65536; // 64 KB at a time
+
+        $results = [
+            'statements'   => [],   // capped list of per-statement entries (success+error)
+            'total'        => 0,    // count of all executed statements
+            'success'      => 0,
+            'errors'       => 0,
+            'rows'         => 0,
+            'success_kept' => 0,
+            'errors_kept'  => 0,
+            'truncated'    => false,
+            'aborted'      => false,
+            'fast'         => $fast,
+        ];
+
+        // Fast-mode state — these only matter when $fast is true
+        $inTransaction = false;
+        // Statements that implicitly commit any open transaction (per MySQL docs)
+        // We detect by matching the statement's leading keyword.
+        $isDdlOrImplicitCommit = function (string $stmt): bool {
+            // Strip leading comments / whitespace so we can see the first keyword
+            $cleaned = preg_replace('#^(\s|/\*.*?\*/|--[^\n]*\n|\#[^\n]*\n)+#s', '', $stmt);
+            return (bool) preg_match(
+                '/^(CREATE|ALTER|DROP|TRUNCATE|RENAME|USE|SET\s+NAMES|GRANT|REVOKE|FLUSH|LOCK|UNLOCK|CHECK|REPAIR|OPTIMIZE|ANALYZE|START\s+TRANSACTION|BEGIN|COMMIT|ROLLBACK)\b/i',
+                $cleaned
+            );
+        };
+
+        // Fast-mode setup: disable checks once at the top
+        if ($fast) {
+            try {
+                $pdo->exec('SET unique_checks=0');
+                $pdo->exec('SET foreign_key_checks=0');
+            } catch (\PDOException $e) {
+                // Non-fatal: just degrades performance but doesn't break anything
+            }
+        }
+
+        $execute = function (string $stmt) use ($pdo, &$results, &$inTransaction, $MAX_KEPT_SUCCESS, $MAX_KEPT_ERRORS, $onProgress, $progressEvery, $fast, $isDdlOrImplicitCommit) {
+            $stmt = trim($stmt);
+            if ($stmt === '') return true;
+
+            // Fast mode: figure out if this statement should be inside a
+            // transaction, or if it implicitly commits.
+            if ($fast) {
+                $isImplicitCommit = $isDdlOrImplicitCommit($stmt);
+                if ($isImplicitCommit && $inTransaction) {
+                    // DDL — commit the current transaction first so we don't
+                    // get a surprise auto-commit mid-stream.
+                    try {
+                        $pdo->commit();
+                    } catch (\PDOException $e) {
+                        // Already auto-committed; ignore
+                    }
+                    $inTransaction = false;
+                }
+                if (!$isImplicitCommit && !$inTransaction) {
+                    // First DML after DDL — open a fresh transaction
+                    try {
+                        $pdo->beginTransaction();
+                        $inTransaction = true;
+                    } catch (\PDOException $e) {
+                        // Already in transaction or driver doesn't support it
+                    }
+                }
+            }
+
+            $results['total']++;
+            $start = microtime(true);
+            try {
+                $affected = $pdo->exec($stmt);
+                $elapsed = microtime(true) - $start;
+                $results['success']++;
+                $results['rows'] += $affected !== false ? (int)$affected : 0;
+                if ($results['success_kept'] < $MAX_KEPT_SUCCESS) {
+                    $results['statements'][] = [
+                        'success' => true,
+                        'sql'     => mb_substr($stmt, 0, 120) . (mb_strlen($stmt) > 120 ? '…' : ''),
+                        'rows'    => $affected !== false ? $affected : 0,
+                        'time'    => $elapsed,
+                    ];
+                    $results['success_kept']++;
+                } else {
+                    $results['truncated'] = true;
+                }
+            } catch (\PDOException $e) {
+                $elapsed = microtime(true) - $start;
+                $results['errors']++;
+                if ($results['errors_kept'] < $MAX_KEPT_ERRORS) {
+                    $results['statements'][] = [
+                        'success' => false,
+                        'sql'     => mb_substr($stmt, 0, 120) . (mb_strlen($stmt) > 120 ? '…' : ''),
+                        'error'   => $e->getMessage(),
+                        'time'    => $elapsed,
+                    ];
+                    $results['errors_kept']++;
+                } else {
+                    $results['truncated'] = true;
+                }
+
+                // Fast mode: roll back current transaction and abort the import.
+                // Earlier committed transactions (from previous DDL boundaries)
+                // remain — the UI reports this honestly.
+                if ($fast) {
+                    if ($inTransaction) {
+                        try {
+                            $pdo->rollBack();
+                        } catch (\PDOException $rbErr) {
+                            // If rollback fails the transaction state is already gone
+                        }
+                        $inTransaction = false;
+                    }
+                    $results['aborted'] = true;
+                    // Signal to outer loop to stop reading more statements
+                    return false;
+                }
+            }
+
+            // Report progress periodically (and on every error so the user
+            // sees the error counter tick up in real time).
+            if ($onProgress !== null) {
+                $isErr = $results['errors'] > 0 && !end($results['statements'])['success'];
+                if ($isErr || ($results['total'] % $progressEvery) === 0) {
+                    $onProgress($results);
+                }
+            }
+            return true;
+        };
+
+        $buffer = '';
+        $delimiter = ';';
+        $aborted = false;
+
+        try {
+            while (!feof($fh) && !$aborted) {
+                $chunk = fread($fh, $READ_CHUNK_BYTES);
+                if ($chunk === false) break;
+                $buffer .= $chunk;
+
+                // Parse what we have. Anything that can't be parsed yet
+                // (mid-statement, mid-string, mid-comment) stays in $remainder
+                // for the next read.
+                [$complete, $remainder, $delimiter] =
+                    $this->splitSqlStatementsStreaming($buffer, $delimiter);
+
+                foreach ($complete as $stmt) {
+                    if ($execute($stmt) === false) {
+                        $aborted = true;
+                        break;
+                    }
+                }
+
+                $buffer = $remainder;
+            }
+
+            // Flush any final unterminated statement
+            if (!$aborted) {
+                $tail = trim($buffer);
+                if ($tail !== '' && !$this->isOnlyCommentsAndWhitespace($tail)) {
+                    $execute($tail);
+                }
+            }
+
+            // Fast mode: commit the final transaction (if any)
+            if ($fast && $inTransaction && !$aborted) {
+                try {
+                    $pdo->commit();
+                } catch (\PDOException $e) {
+                    // ignore — connection might already be closed or auto-committed
+                }
+                $inTransaction = false;
+            }
+        } finally {
+            // Fast mode cleanup: restore the session settings we tweaked
+            if ($fast) {
+                if ($inTransaction) {
+                    try { $pdo->rollBack(); } catch (\PDOException $e) {}
+                }
+                try {
+                    $pdo->exec('SET unique_checks=1');
+                    $pdo->exec('SET foreign_key_checks=1');
+                } catch (\PDOException $e) {
+                    // ignore
+                }
+            }
+            fclose($fh);
+        }
+
+        // Final progress emission so the client sees the last batch's counters
+        if ($onProgress !== null) {
+            $onProgress($results);
+        }
+
+        return $results;
+    }
+
+    /**
+     * Quick count of statements in a SQL file, for showing a progress total.
+     * Uses the same streaming parser but only increments a counter — no
+     * statement bodies are stored. Roughly 2-5x faster than executing.
+     *
+     * Returns the statement count, or 0 on read failure.
+     */
+    public function countStatementsInFile(string $filePath): int
+    {
+        $fh = @fopen($filePath, 'rb');
+        if (!$fh) return 0;
+
+        $buffer = '';
+        $delimiter = ';';
+        $count = 0;
+        $READ_CHUNK_BYTES = 131072; // 128 KB for counting — bigger chunks ok here
+
+        try {
+            while (!feof($fh)) {
+                $chunk = fread($fh, $READ_CHUNK_BYTES);
+                if ($chunk === false) break;
+                $buffer .= $chunk;
+                [$complete, $remainder, $delimiter] =
+                    $this->splitSqlStatementsStreaming($buffer, $delimiter);
+                $count += count($complete);
+                $buffer = $remainder;
+            }
+            // Account for any trailing statement without a delimiter
+            $tail = trim($buffer);
+            if ($tail !== '' && !$this->isOnlyCommentsAndWhitespace($tail)) {
+                $count++;
+            }
+        } finally {
+            fclose($fh);
+        }
+
+        return $count;
     }
 
     private function splitSqlStatements_LEGACY_REMOVED(string $sql): array

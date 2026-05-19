@@ -2600,6 +2600,147 @@ textarea.inline-input {
     font-family: var(--font-mono);
 }
 
+/* ── Import Progress (live streaming) ──────────────────────────────────
+   Shown after the user submits the SQL form while the upload + import is
+   in flight. Replaces the form's standard "submit and wait" experience.
+*/
+.import-progress {
+    margin-top: 16px;
+    padding: 14px 16px;
+    background: var(--bg-panel-alt);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+}
+.import-progress-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+.import-progress-phase {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.import-progress-elapsed {
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+}
+.import-progress-bar-track {
+    position: relative;
+    height: 6px;
+    background: var(--bg-input);
+    border-radius: 999px;
+    overflow: hidden;
+}
+.import-progress-bar-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: var(--accent);
+    border-radius: 999px;
+    width: 0;
+    transition: width 200ms ease-out;
+}
+/* Indeterminate animation while counting statements (no denominator yet) */
+.import-progress-bar-indeterminate {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        var(--accent) 50%,
+        transparent 100%
+    );
+    background-size: 40% 100%;
+    animation: ledger-import-indeterminate 1.2s linear infinite;
+}
+@keyframes ledger-import-indeterminate {
+    0%   { background-position: -40% 0; }
+    100% { background-position: 140% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .import-progress-bar-indeterminate { animation: none; opacity: 0.6; }
+}
+.import-progress-stats {
+    margin-top: 10px;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.5;
+}
+.import-progress-stats .stat-error {
+    color: var(--danger);
+}
+.import-progress-stats .stat-divider {
+    color: var(--text-muted);
+    margin: 0 6px;
+}
+
+.import-stream-result {
+    margin-top: 16px;
+}
+
+/* Disabled submit state while import is running */
+.import-form button[type="submit"]:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* ── Fast mode toggle ─────────────────────────────────────────────── */
+.import-fast-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-top: 14px;
+    padding: 10px 12px;
+    background: var(--bg-panel-alt);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: border-color 150ms ease;
+}
+.import-fast-toggle:hover {
+    border-color: var(--border-light);
+}
+.import-fast-toggle input[type="checkbox"] {
+    margin-top: 2px;
+    flex-shrink: 0;
+}
+.import-fast-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: var(--font-size-sm);
+}
+.import-fast-label strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+.import-fast-desc {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    line-height: 1.5;
+}
+
+/* Aborted-import warning panel */
+.import-result-aborted {
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: rgba(229, 72, 72, 0.08);
+    border: 1px solid rgba(229, 72, 72, 0.3);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+    line-height: 1.6;
+}
+.import-result-aborted strong {
+    color: var(--danger);
+}
+
 /* ── Import Results ── */
 
 .import-result-card {
