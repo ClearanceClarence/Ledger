@@ -36,6 +36,7 @@ return [
         'session_name'       => 'LEDGER_SESSION',
         'csrf_enabled'       => true,
         'ip_whitelist'       => [],
+        'trusted_proxies'    => [],
         'force_https'        => false,
         'read_only'          => false,
         'hidden_databases'   => {{HIDDEN_DBS}},

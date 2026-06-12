@@ -8,7 +8,12 @@ class Auth
     public function __construct(array $securityConfig)
     {
         $this->config = $securityConfig;
-        $this->lockFile = sys_get_temp_dir() . '/ledger_lockout.json';
+        // Keep lockout state inside logs/ (web-protected) rather than the
+        // system temp dir, which is world-readable on shared hosts — another
+        // tenant could read the failed-attempt IP list or clear the counters.
+        $logDir = __DIR__ . '/../logs';
+        if (!is_dir($logDir)) @mkdir($logDir, 0750, true);
+        $this->lockFile = $logDir . '/lockout.json';
     }
 
     // Session Management
@@ -97,15 +102,26 @@ class Auth
         $totpSecret = is_array($storedPassword) ? ($storedPassword['totp_secret'] ?? null) : null;
 
         $valid = false;
-        if (str_starts_with($hash, '$2y$') || str_starts_with($hash, '$2a$')) {
+        $isBcrypt = str_starts_with($hash, '$2y$') || str_starts_with($hash, '$2a$');
+        if ($isBcrypt) {
             $valid = password_verify($password, $hash);
         } else {
+            // Legacy / hand-edited plaintext credential. Still accepted so we
+            // don't lock anyone out, but upgraded to bcrypt below so it never
+            // persists as plaintext past the first successful login.
             $valid = hash_equals($hash, $password);
         }
 
         if (!$valid) {
             $this->recordFailedAttempt($ip);
             return 'Invalid username or password.';
+        }
+
+        // Auto-upgrade a legacy plaintext credential to bcrypt so it never
+        // persists as plaintext. Best-effort: if config.php isn't writable we
+        // just continue with the login rather than failing it.
+        if (!$isBcrypt) {
+            $this->upgradePasswordHash($username, $password, $totpSecret);
         }
 
         // If 2FA is enabled for this user, require TOTP step
@@ -155,10 +171,19 @@ class Auth
         }
 
         require_once __DIR__ . '/TOTP.php';
-        if (!LedgerTOTP::verify($totpSecret, $code)) {
+        $matchedStep = LedgerTOTP::verifyAt($totpSecret, $code);
+        if ($matchedStep === null) {
             $this->recordFailedAttempt($ip);
             return 'Invalid verification code.';
         }
+
+        // Replay protection: refuse a code whose time-step was already used for
+        // this user. Without this, a captured code is reusable for up to ~90s.
+        if ($this->totpStepAlreadyUsed($username, $matchedStep)) {
+            $this->recordFailedAttempt($ip);
+            return 'That code was already used. Wait for your authenticator to show a new one.';
+        }
+        $this->recordTotpStep($username, $matchedStep);
 
         // 2FA verified
         unset($_SESSION['ledger_2fa_pending'], $_SESSION['ledger_2fa_username']);
@@ -322,10 +347,22 @@ class Auth
         // safer rejection rather than letting writes through.)
         $statements = preg_split('/;\s*/', $sql);
         foreach ($statements as $stmt) {
+            // Strip leading SQL comments and whitespace so a comment prefix
+            // like "/* x */ DELETE …" or "-- x\nDELETE …" can't hide a write.
+            $stmt = preg_replace('#^(\s|/\*.*?\*/|--[^\n]*\n|\#[^\n]*\n)+#s', '', $stmt);
             $trimmed = strtoupper(ltrim($stmt));
             if ($trimmed === '') continue;
+
             foreach ($writeKeywords as $kw) {
                 if (str_starts_with($trimmed, $kw)) return true;
+            }
+
+            // A CTE (WITH …) can wrap a writing statement: "WITH x AS (…) DELETE …".
+            // If any write keyword appears after the WITH, treat it as a write.
+            if (str_starts_with($trimmed, 'WITH')) {
+                foreach ($writeKeywords as $kw) {
+                    if (preg_match('/\b' . $kw . '\b/', $trimmed)) return true;
+                }
             }
         }
         return false;
@@ -461,14 +498,83 @@ class Auth
         return max(0, $lockoutDuration - $elapsed);
     }
 
+    // TOTP Replay Protection
+
+    private function totpFile(): string
+    {
+        return __DIR__ . '/../logs/totp_used.json';
+    }
+
+    private function totpStepAlreadyUsed(string $username, int $step): bool
+    {
+        $file = $this->totpFile();
+        if (!file_exists($file)) return false;
+        $data = @json_decode(@file_get_contents($file), true);
+        if (!is_array($data)) return false;
+        return (int)($data[$username] ?? -1) === $step;
+    }
+
+    private function recordTotpStep(string $username, int $step): void
+    {
+        $file = $this->totpFile();
+        $dir = dirname($file);
+        if (!is_dir($dir)) @mkdir($dir, 0750, true);
+        $data = [];
+        if (file_exists($file)) {
+            $decoded = @json_decode(@file_get_contents($file), true);
+            if (is_array($decoded)) $data = $decoded;
+        }
+        $data[$username] = $step;
+        @file_put_contents($file, json_encode($data), LOCK_EX);
+    }
+
+    /**
+     * Rewrite a user's stored credential as a bcrypt hash, preserving any
+     * configured TOTP secret. Best-effort — silently no-ops if config.php
+     * can't be loaded or written.
+     */
+    private function upgradePasswordHash(string $username, string $plaintext, ?string $totpSecret): void
+    {
+        $configPath = __DIR__ . '/../config.php';
+        if (!is_file($configPath) || !is_writable($configPath)) return;
+
+        $config = require $configPath;
+        if (!is_array($config) || !isset($config['security']['users'][$username])) return;
+
+        $newHash = password_hash($plaintext, PASSWORD_BCRYPT);
+        $config['security']['users'][$username] = $totpSecret
+            ? ['password' => $newHash, 'totp_secret' => $totpSecret]
+            : $newHash;
+
+        require_once __DIR__ . '/../templates/settings_save.php';
+        if (function_exists('ledger_write_config_file')) {
+            @ledger_write_config_file($configPath, $config);
+        }
+    }
+
     // Helpers
 
     public function getClientIp(): string
     {
-        return $_SERVER['HTTP_X_FORWARDED_FOR']
-            ?? $_SERVER['HTTP_X_REAL_IP']
-            ?? $_SERVER['REMOTE_ADDR']
-            ?? '0.0.0.0';
+        $remote = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+
+        // Forwarded headers are attacker-controlled unless the request comes
+        // from a proxy we explicitly trust. Without that gate, anyone can send
+        // X-Forwarded-For to bypass the IP allowlist or rotate it to defeat
+        // brute-force lockout. Only consult them when REMOTE_ADDR is a known
+        // trusted proxy, and take the left-most (original client) entry.
+        $trusted = $this->config['trusted_proxies'] ?? [];
+        if (!empty($trusted) && in_array($remote, $trusted, true)) {
+            $fwd = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['HTTP_X_REAL_IP'] ?? '';
+            if ($fwd !== '') {
+                $first = trim(explode(',', $fwd)[0]);
+                if (filter_var($first, FILTER_VALIDATE_IP)) {
+                    return $first;
+                }
+            }
+        }
+
+        return $remote;
     }
 
     public function sendSecurityHeaders(): void

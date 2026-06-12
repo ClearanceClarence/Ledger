@@ -1,0 +1,52 @@
+# Ledger — nginx configuration example
+#
+# The shipped .htaccess only protects Apache. On nginx, none of those rules
+# apply, which means logs/queries.log, config.php, and the includes/ source
+# would otherwise be served as plain files. Mirror the protections here.
+#
+# Drop this into your server block (adjust root and the PHP socket to match
+# your install), or use it as a reference.
+
+server {
+    listen 80;
+    server_name ledger.example.com;
+    root /var/www/ledger;
+    index index.php;
+
+    # ── Security headers (mirror .htaccess) ──
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+
+    # ── Block sensitive paths ──
+    # config.php holds DB credentials and the user password hashes.
+    location = /config.php { deny all; return 404; }
+
+    # includes/ is PHP source, logs/ holds query logs and per-user JSON state.
+    location ^~ /includes/ { deny all; return 404; }
+    location ^~ /logs/     { deny all; return 404; }
+
+    # Theme PHP files should never be served (only CSS/JSON are).
+    location ~ ^/themes/.+\.php$ { deny all; return 404; }
+
+    # Hidden files (.htaccess, .git, etc.)
+    location ~ /\. { deny all; return 404; }
+
+    # ── PHP handling ──
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        # Adjust to your PHP-FPM socket or TCP address.
+        fastcgi_pass unix:/run/php/php-fpm.sock;
+    }
+
+    # Everything else: serve static assets, fall back to index.php.
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    # Imports can be large — raise if you import big dumps.
+    client_max_body_size 256M;
+}

@@ -3602,6 +3602,19 @@ select.settings-input option {
     transition: background 0.1s;
 }
 .settings-check:hover { background: var(--bg-hover); }
+
+.settings-check--disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+.settings-check--disabled:hover { background: transparent; }
+
+.settings-check-hint {
+    margin-left: 6px;
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+    font-style: italic;
+}
 .settings-check input[type="checkbox"] { margin: 0; cursor: pointer; }
 
 .settings-user-row {
@@ -4206,19 +4219,26 @@ select.settings-input option {
     color: var(--text-primary);
 }
 
-/* ═══ Keyboard Shortcut Overlay ══════════════════════════ */
+/* ═══ Keyboard Shortcut Overlay ══════════════════════════════════════
+   Hybrid design: searchable input + grouped sections. Single-column
+   row layout (keys on left, description on right) rather than a
+   space-wasting 2-column grid. Filters live as the user types;
+   shows/hides sections and rows accordingly.
+*/
 
 .shortcut-overlay {
     position: fixed;
     inset: 0;
     z-index: 10000;
-    background: rgba(0, 0, 0, 0.6);
+    background: rgba(0, 0, 0, 0.55);
     backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
     display: flex;
     align-items: center;
     justify-content: center;
     opacity: 0;
-    transition: opacity 0.15s;
+    transition: opacity 150ms ease;
+    padding: 24px;
 }
 .shortcut-overlay.shortcut-visible { opacity: 1; }
 
@@ -4226,110 +4246,236 @@ select.settings-input option {
     background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    width: 560px;
-    max-width: 90vw;
-    max-height: 80vh;
+    width: 640px;
+    max-width: 100%;
+    max-height: 85vh;
     display: flex;
     flex-direction: column;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-    transform: scale(0.95);
-    transition: transform 0.15s;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+    transform: scale(0.97) translateY(4px);
+    transition: transform 150ms ease;
+    overflow: hidden;
 }
-.shortcut-visible .shortcut-box { transform: scale(1); }
+.shortcut-visible .shortcut-box {
+    transform: scale(1) translateY(0);
+}
 
+/* ─── Header ────────────────────────────────────────────────────── */
 .shortcut-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px 20px;
+    padding: 14px 18px;
     border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
 }
-
+.shortcut-header-left {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
 .shortcut-title {
-    font-weight: 700;
+    font-weight: 600;
     font-size: var(--font-size-base);
     color: var(--text-primary);
+    letter-spacing: -0.005em;
+}
+.shortcut-platform-hint {
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
 }
 
 .shortcut-close {
-    background: none;
-    border: none;
+    background: transparent;
+    border: 1px solid transparent;
     color: var(--text-muted);
-    font-size: 20px;
+    font-size: 18px;
     cursor: pointer;
-    padding: 0 4px;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-sm);
     line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 120ms ease, color 120ms ease;
 }
-.shortcut-close:hover { color: var(--text-primary); }
+.shortcut-close:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
 
+/* ─── Search bar ───────────────────────────────────────────────── */
+.shortcut-search-wrap {
+    position: relative;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.shortcut-search-icon {
+    position: absolute;
+    left: 28px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+    pointer-events: none;
+}
+.shortcut-search {
+    width: 100%;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 7px 50px 7px 32px;
+    font: inherit;
+    font-size: var(--font-size-sm);
+    color: var(--text-primary);
+    transition: border-color 120ms ease;
+}
+.shortcut-search:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+.shortcut-search::placeholder {
+    color: var(--text-muted);
+}
+.shortcut-search-hint {
+    position: absolute;
+    right: 26px;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    padding: 1px 6px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border-light);
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+/* ─── Body ─────────────────────────────────────────────────────── */
 .shortcut-body {
-    padding: 16px 20px;
+    padding: 8px 0;
     overflow-y: auto;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 20px;
+    flex: 1;
+}
+
+.shortcut-section {
+    padding: 10px 18px;
+}
+.shortcut-section.hidden {
+    display: none;
 }
 
 .shortcut-section-title {
-    font-size: var(--font-size-xs);
+    font-size: 10.5px;
     font-weight: 700;
     color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.08em;
     margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
 }
 
 .shortcut-row {
-    display: flex;
+    display: grid;
+    grid-template-columns: 180px 1fr;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 4px 0;
+    gap: 16px;
+    padding: 5px 8px;
+    border-radius: var(--radius-sm);
+    transition: background 100ms ease;
+}
+.shortcut-row.hidden {
+    display: none;
+}
+.shortcut-row:hover {
+    background: var(--bg-hover);
 }
 
 .shortcut-keys {
     display: flex;
     align-items: center;
-    gap: 3px;
-    flex-shrink: 0;
+    gap: 4px;
+    flex-wrap: wrap;
 }
 
 .shortcut-keys kbd {
-    display: inline-block;
-    padding: 2px 7px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 7px;
     background: var(--bg-hover);
     border: 1px solid var(--border-light);
+    border-bottom-width: 2px;
     border-radius: 4px;
     font-family: var(--font-mono);
     font-size: 11px;
     font-weight: 600;
     color: var(--text-primary);
-    line-height: 1.4;
-    min-width: 22px;
-    text-align: center;
+    line-height: 1;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
 }
 
 .shortcut-plus {
     font-size: 10px;
     color: var(--text-muted);
+    margin: 0 1px;
+    font-weight: 500;
+}
+
+.shortcut-or {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin: 0 4px;
+    font-style: italic;
 }
 
 .shortcut-desc {
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-sm);
     color: var(--text-secondary);
-    text-align: right;
+    line-height: 1.4;
 }
 
+/* Empty-state when search returns no results */
+.shortcut-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 40px 20px;
+    text-align: center;
+}
+.shortcut-empty span {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+.shortcut-empty small {
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+}
+
+/* ─── Footer ───────────────────────────────────────────────────── */
 .shortcut-footer {
-    padding: 10px 20px;
+    padding: 10px 18px;
     border-top: 1px solid var(--border);
     text-align: center;
     font-size: var(--font-size-xs);
     color: var(--text-muted);
+    flex-shrink: 0;
+    background: var(--bg-panel-alt);
 }
 .shortcut-footer kbd {
     display: inline-block;
-    padding: 1px 5px;
+    padding: 1px 6px;
+    margin: 0 1px;
     background: var(--bg-hover);
     border: 1px solid var(--border-light);
     border-radius: 3px;
@@ -4338,6 +4484,19 @@ select.settings-input option {
     font-weight: 600;
     color: var(--text-secondary);
 }
+
+/* Compact layout for narrower viewports */
+@media (max-width: 600px) {
+    .shortcut-row {
+        grid-template-columns: 1fr;
+        gap: 4px;
+        padding: 8px;
+    }
+    .shortcut-desc {
+        font-size: var(--font-size-xs);
+    }
+}
+
 
 /* ═══ Animations ═════════════════════════════════════════ */
 

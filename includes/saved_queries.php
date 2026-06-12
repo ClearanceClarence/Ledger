@@ -3,6 +3,7 @@
  * Ledger — Saved Queries (per-user JSON storage)
  */
 
+function ledger_saved_queries_file(): string
 {
     return __DIR__ . '/../logs/saved_queries.json';
 }

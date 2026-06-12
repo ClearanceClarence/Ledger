@@ -61,6 +61,16 @@ if ($db && $auth->isDatabaseHidden($db)) {
     exit;
 }
 
+// ─── Update check (early exit, no DB needed) ─────────────────────────
+// Handled here so the banner still works when MySQL is down. The check
+// itself just reads logs/version-cache.json and optionally refreshes from
+// tryledger.dev — neither needs a database connection.
+if ($action === 'check_update') {
+    require __DIR__ . '/includes/UpdateCheck.php';
+    echo json_encode(UpdateCheck::run($config));
+    exit;
+}
+
 try {
     $dbInstance = Database::getInstance($config['db']);
     $dbInstance->connect();
@@ -665,7 +675,7 @@ switch ($action) {
         $layoutData = $_POST['layout'] ?? '';
         if (!$layoutData) { echo json_encode(['error' => 'No layout data.']); break; }
         $erDir = __DIR__ . '/logs/er';
-        if (!is_dir($erDir)) mkdir($erDir, 0755, true);
+        if (!is_dir($erDir)) @mkdir($erDir, 0750, true);
         $safeDb = preg_replace('/[^a-zA-Z0-9_-]/', '_', $db);
         $file = $erDir . '/' . $safeDb . '.json';
         $written = file_put_contents($file, $layoutData);
@@ -1063,6 +1073,12 @@ switch ($action) {
         $sql = trim($_POST['sql'] ?? '');
         if (!$db || !$sql) {
             echo json_encode(['error' => 'Database and query required.']);
+            break;
+        }
+        // EXPLAIN itself is non-mutating, but this endpoint accepts raw SQL —
+        // reject writes in read-only mode the same as every other path.
+        if ($auth->isReadOnly() && $auth->isWriteQuery($sql)) {
+            echo json_encode(['error' => 'Write operations are disabled in read-only mode.']);
             break;
         }
         // Strip trailing semicolon and any trailing comments

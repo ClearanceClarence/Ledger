@@ -209,7 +209,7 @@ if (!function_exists('process_command_color')) {
             var cmdStyle = commandColor(p.command);
             var timeClr = timeColor(p.time, p.command);
             var host = p.host || '—';
-            var db   = p.db   || '<span style="color:var(--text-muted);">—</span>';
+            var db   = p.db ? escapeHtml(p.db) : '<span style="color:var(--text-muted);">—</span>';
             var stateTxt = p.state ? escapeHtml(p.state) : '<span style="color:var(--text-muted);">—</span>';
             var info = p.info ? escapeHtml(p.info) : '<span style="color:var(--text-muted);">—</span>';
 

@@ -8,6 +8,43 @@ All notable changes to [Ledger](https://github.com/ClearanceClarence/Ledger) are
 
 ---
 
+## [1.0.2-beta] — 2026-06-12
+
+> **Security + polish release.** A full self-audit of the codebase turned up a handful of real issues — the most serious being that `X-Forwarded-For` was trusted as the client IP (bypassing the IP allowlist and brute-force lockout), that the read-only mode could be slipped past via the EXPLAIN endpoint and comment-prefixed writes, and that the Saved Queries feature was outright broken by a dropped function signature. All fixed here. On top of that: the keyboard-shortcut overlay was rebuilt with search, the update check moved server-side, the update notification became a toast, a proper favicon set shipped, and the `force_https` setting can no longer lock you out.
+
+### Security
+
+- **`X-Forwarded-For` is no longer trusted by default.** It was consulted before `REMOTE_ADDR`, so on a direct deployment any client could send the header to spoof their IP — bypassing the IP allowlist, defeating brute-force lockout (rotate the header → unlimited attempts), and poisoning the activity log. Forwarded headers are now honored only when the request originates from an IP in the new `trusted_proxies` config list, and the left-most list entry is validated with `filter_var(...,FILTER_VALIDATE_IP)`. New setting under Settings → Trusted Proxies; empty by default, which means forwarded headers are ignored entirely.
+- **Read-only mode hardened.** Three gaps closed: stacked queries are now blocked at the driver (`MYSQL_ATTR_MULTI_STATEMENTS=false`), so `EXPLAIN SELECT 1; DROP TABLE x` can't smuggle a write through the explain endpoint; the `explain_query` AJAX action gained the read-only guard every other write path already had; and `isWriteQuery()` now strips leading SQL comments before keyword-matching and recognizes writing CTEs (`WITH … DELETE …`), both of which previously slipped past as non-writes.
+- **Stored XSS in the Processes view fixed.** Every field in the process-list row was HTML-escaped except the database name, which can legally contain markup (`CREATE DATABASE` accepts almost anything in backticks). A DB named with an `onerror` payload would execute when an admin opened the Processes tab. Now escaped like the rest.
+- **DSN parameter injection guarded.** The `db` request parameter is rejected if it contains `;` or control characters before being interpolated into the PDO DSN, closing a path to inject extra connection parameters.
+- **TOTP codes can no longer be replayed.** A valid 2FA code was accepted for its full ±1 step (~90s) window with no record of use. The matched time-step is now burned per-user, so a captured code can't be reused within its validity window.
+- **Lockout state moved out of the system temp directory.** Failed-attempt tracking lived in `sys_get_temp_dir()`, which is world-readable on shared hosts — another tenant could read the attempt/IP data or clear the counters. It now lives in the web-protected `logs/` directory.
+- **Legacy plaintext credentials auto-upgrade to bcrypt.** A hand-edited plaintext password in `config.php` still logs in once, then is silently rewritten as a bcrypt hash so it never persists as plaintext.
+
+### Fixed
+
+- **Saved Queries no longer fatals.** A dropped `function ledger_saved_queries_file(): string` signature left the function undefined while the rest of the file still parsed, so every saved-query action (`save`, `list`, `update`, `delete`) returned a 500 / malformed JSON. The whole feature was dead. Restored.
+- **`force_https` can no longer lock you out.** Enabling "Force HTTPS redirect" on a server with no working HTTPS listener (e.g. default XAMPP, no 443) previously 301'd every request to an unreachable `https://` URL — and because the redirect was a permanent 301, browsers cached it indefinitely, so even fixing `config.php` didn't stop the auto-redirect until the cache was cleared. Now: the redirect is a 302; the setting can only be enabled from an already-HTTPS session (proving HTTPS works before committing to it); and the Settings checkbox is disabled over plain HTTP with an inline explanation.
+- **Latent `ReferenceError` in the old update-banner code.** A fallback path referenced an undefined `repo` variable. Never triggered in practice (the upstream always supplied a URL) but would have crashed if it hadn't.
+
+### New Features
+
+- **Keyboard-shortcut overlay rebuilt.** The `?` overlay now has live search (matches key labels, descriptions, and section names — `sql` pulls in the whole SQL Editor section), a single-column layout that gives descriptions the full row width, platform-aware key labels (`⌘ ⇧ ⌥ ⏎` on Mac, detected via `navigator.platform`), command-palette Esc behavior (first Esc clears search, second closes), an empty state, and a mobile-stacked layout under 600px.
+- **Favicon set.** Previously no favicon link existed in any head section, so browsers showed the default globe. Ships the three-bar ledger mark on a rounded-square green background, with light (`#16a34a`) and dark (`#4ade80`) variants selected via `prefers-color-scheme`, plus a 32px PNG fallback and a 180px apple-touch-icon. Wired into the main UI, installer, login, and 2FA head sections.
+
+### Changed
+
+- **Update check runs through a server-side proxy.** The browser previously fetched `tryledger.dev/api/version.json` directly via CORS, which failed silently whenever a CDN stripped the CORS headers and exposed every admin's IP to the endpoint. The browser now calls a same-origin `ajax.php?action=check_update`, handled by a new `UpdateCheck` class that caches the upstream response in `logs/version-cache.json` for 24h, fetches server-side via cURL (with a `file_get_contents` fallback), serves stale cache marked `stale:true` if the upstream is down, and sends no cookies or referer. One outbound request per install per day instead of one per browser per day. The check runs before the DB connection, so the banner still works when MySQL is down.
+- **Update notification is now a toast.** The full-width banner that pushed page content down was replaced with a small top-right toast (slide-in, pulse dot, theme-driven colors across all 20 themes). Security updates get a distinct amber treatment and omit the dismiss button. Respects `prefers-reduced-motion`.
+
+### Deployment
+
+- **nginx config shipped.** The repo only carried an `.htaccess`, so on nginx none of the file protections applied and `GET /logs/queries.log` would serve the query history as plaintext. Added `nginx.conf.example` mirroring the Apache rules, plus a deny-all `logs/.htaccess` as belt-and-suspenders.
+- **`.gitattributes` added** pinning all text files to LF, so Windows checkouts stop producing phantom LF↔CRLF churn in diffs.
+
+---
+
 ## [1.0.1-beta] — 2026-05-19
 
 > **Hardening release.** First public bug-report cycle uncovered three real problems: the installer was too forgiving of bad input, post-login redirects didn't preserve the user's destination, and exports/imports broke on databases larger than the default `memory_limit`. This release fixes all three. Also brings a quality-of-life redesign of the header info chips and an honest "fast mode" toggle for the SQL import that wraps it in transactions for a 5-20x speedup on large dumps.

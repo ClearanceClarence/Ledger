@@ -536,11 +536,12 @@ const Ledger = {
     },
 
     escapeHtml(str) {
-        return str
+        return String(str)
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     },
 
     getCsrfToken() {
@@ -2178,11 +2179,9 @@ const Ledger = {
                 this.showShortcutOverlay();
             }
 
-            // Escape → close shortcut overlay
-            if (e.key === 'Escape') {
-                const overlay = document.getElementById('shortcut-overlay');
-                if (overlay) { overlay.remove(); e.preventDefault(); }
-            }
+            // Note: Escape handling for the shortcut overlay lives in
+            // showShortcutOverlay() itself, so Esc can clear-search-first
+            // before closing. We don't catch Esc globally here.
         });
     },
 
@@ -2194,78 +2193,198 @@ const Ledger = {
             return;
         }
 
+        // Detect Mac for key-symbol substitution. `navigator.platform` is
+        // deprecated but still reliable enough; userAgent fallback catches
+        // newer Macs that lie about platform.
+        const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform) ||
+                      /Macintosh/.test(navigator.userAgent);
+
+        // Mac key-symbol map. Win/Linux keys are passed through unchanged.
+        const macKeyMap = {
+            'Ctrl':  '⌘',
+            'Cmd':   '⌘',
+            'Shift': '⇧',
+            'Alt':   '⌥',
+            'Opt':   '⌥',
+            'Enter': '⏎',
+        };
+        const renderKey = (label) => isMac && macKeyMap[label] ? macKeyMap[label] : label;
+
+        // Source data. Each shortcut is [keys, description]. `keys` uses
+        // ' + ' as separator. The keys are platform-agnostic — renderKey()
+        // substitutes for Mac at render time.
         const shortcuts = [
-            { section: 'General', items: [
-                ['?', 'Show this overlay'],
-                ['Esc', 'Close overlay / cancel edit / dismiss modal'],
-                ['Ctrl + Shift + S', 'Focus SQL editor'],
+            { id: 'general', section: 'General', items: [
+                ['?',                  'Show this overlay'],
+                ['Esc',                'Close overlay / cancel edit / dismiss modal'],
+                ['Ctrl + Shift + S',   'Focus SQL editor'],
             ]},
-            { section: 'SQL Editor', items: [
-                ['Ctrl + Enter', 'Execute query'],
-                ['Tab', 'Insert 4 spaces'],
-                ['Shift + Tab', 'Remove indent'],
-                ['↑ ↓', 'Navigate autocomplete'],
-                ['Tab / Enter', 'Accept autocomplete suggestion'],
-                ['Esc', 'Close autocomplete'],
+            { id: 'sql', section: 'SQL Editor', items: [
+                ['Ctrl + Enter',       'Execute query'],
+                ['Tab',                'Insert 4 spaces'],
+                ['Shift + Tab',        'Remove indent'],
+                ['↑ ↓',                'Navigate autocomplete'],
+                ['Tab / Enter',        'Accept autocomplete suggestion'],
+                ['Esc',                'Close autocomplete'],
             ]},
-            { section: 'Data Browsing', items: [
-                ['Click cell', 'Edit inline'],
-                ['Enter', 'Save cell edit'],
-                ['Tab', 'Save & edit next cell'],
-                ['Esc', 'Cancel cell edit'],
-                ['Ctrl + Enter', 'Save textarea edit'],
+            { id: 'browse', section: 'Data Browsing', items: [
+                ['Click cell',         'Edit inline'],
+                ['Enter',              'Save cell edit'],
+                ['Tab',                'Save & edit next cell'],
+                ['Esc',                'Cancel cell edit'],
+                ['Ctrl + Enter',       'Save textarea edit'],
             ]},
-            { section: 'Modals & Forms', items: [
-                ['Enter', 'Confirm / submit'],
-                ['Esc', 'Cancel / close'],
+            { id: 'modals', section: 'Modals & Forms', items: [
+                ['Enter',              'Confirm / submit'],
+                ['Esc',                'Cancel / close'],
             ]},
         ];
 
+        // ─── Build markup ────────────────────────────────────────────────
         const overlay = document.createElement('div');
         overlay.id = 'shortcut-overlay';
         overlay.className = 'shortcut-overlay';
 
-        let html = '<div class="shortcut-box">';
-        html += '<div class="shortcut-header">';
-        html += '<span class="shortcut-title">Keyboard Shortcuts</span>';
-        html += '<button class="shortcut-close" id="shortcut-close">&times;</button>';
-        html += '</div>';
-        html += '<div class="shortcut-body">';
+        const renderKeys = (keysStr) => {
+            // 'Tab / Enter' is a single OR cell — split on " / " for the inner display
+            // 'Ctrl + Shift + S' joins with + separators between kbd boxes
+            const parts = keysStr.split(' + ');
+            return parts.map((part, i) => {
+                let inner;
+                if (part.includes(' / ')) {
+                    // Two alternative single keys (e.g. "Tab / Enter")
+                    const alts = part.split(' / ');
+                    inner = alts.map(a => `<kbd>${renderKey(a)}</kbd>`).join('<span class="shortcut-or">or</span>');
+                } else {
+                    inner = `<kbd>${renderKey(part)}</kbd>`;
+                }
+                return (i > 0 ? '<span class="shortcut-plus" aria-hidden="true">+</span>' : '') + inner;
+            }).join('');
+        };
 
+        let html = '<div class="shortcut-box" role="dialog" aria-label="Keyboard shortcuts" aria-modal="true">';
+
+        // Header
+        html += '<div class="shortcut-header">';
+        html += '<div class="shortcut-header-left">';
+        html += '<span class="shortcut-title">Keyboard Shortcuts</span>';
+        html += '<span class="shortcut-platform-hint">' + (isMac ? 'Mac shortcuts shown' : 'Windows / Linux shortcuts shown') + '</span>';
+        html += '</div>';
+        html += '<button class="shortcut-close" id="shortcut-close" aria-label="Close">&times;</button>';
+        html += '</div>';
+
+        // Search
+        html += '<div class="shortcut-search-wrap">';
+        html += '<svg class="shortcut-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+        html += '<input type="text" class="shortcut-search" id="shortcut-search" placeholder="Search shortcuts…" autocomplete="off" spellcheck="false">';
+        html += '<kbd class="shortcut-search-hint">Esc</kbd>';
+        html += '</div>';
+
+        // Body — sections
+        html += '<div class="shortcut-body" id="shortcut-body">';
         shortcuts.forEach(group => {
-            html += '<div class="shortcut-section">';
-            html += '<div class="shortcut-section-title">' + group.section + '</div>';
-            group.items.forEach(item => {
-                html += '<div class="shortcut-row">';
-                html += '<span class="shortcut-keys">';
-                item[0].split(' + ').forEach((k, i) => {
-                    if (i > 0) html += ' <span class="shortcut-plus">+</span> ';
-                    // Handle special display for arrow keys etc
-                    if (k === '/' || k === '↑ ↓') {
-                        html += '<kbd>' + k + '</kbd>';
-                    } else {
-                        html += '<kbd>' + k + '</kbd>';
-                    }
-                });
-                html += '</span>';
-                html += '<span class="shortcut-desc">' + item[1] + '</span>';
+            html += `<div class="shortcut-section" data-section="${group.id}">`;
+            html += `<div class="shortcut-section-title">${group.section}</div>`;
+            const sectionText = group.section.toLowerCase();
+            group.items.forEach((item, idx) => {
+                const keyText = item[0].toLowerCase();
+                const descText = item[1].toLowerCase();
+                // Search matches against section name + keys + description so
+                // typing "sql" pulls in the whole SQL Editor section, not just
+                // rows whose body contains "sql".
+                html += `<div class="shortcut-row" data-search="${sectionText} ${keyText} ${descText}" tabindex="-1">`;
+                html += `<span class="shortcut-keys">${renderKeys(item[0])}</span>`;
+                html += `<span class="shortcut-desc">${item[1]}</span>`;
                 html += '</div>';
             });
             html += '</div>';
         });
+        html += '<div class="shortcut-empty" id="shortcut-empty" style="display:none;">';
+        html += '<span>No shortcuts match</span>';
+        html += '<small>Try a different search term</small>';
+        html += '</div>';
+        html += '</div>';
 
+        // Footer
+        html += '<div class="shortcut-footer">';
+        html += 'Press <kbd>?</kbd> to open · <kbd>Esc</kbd> to close';
         html += '</div>';
-        html += '<div class="shortcut-footer">Press <kbd>?</kbd> or <kbd>Esc</kbd> to close</div>';
-        html += '</div>';
+        html += '</div>'; // .shortcut-box
 
         overlay.innerHTML = html;
         document.body.appendChild(overlay);
         requestAnimationFrame(() => overlay.classList.add('shortcut-visible'));
 
+        // ─── Behavior ────────────────────────────────────────────────────
+        const searchInput = overlay.querySelector('#shortcut-search');
+        const body        = overlay.querySelector('#shortcut-body');
+        const emptyMsg    = overlay.querySelector('#shortcut-empty');
+        const allRows     = overlay.querySelectorAll('.shortcut-row');
+        const allSections = overlay.querySelectorAll('.shortcut-section');
+
+        // Autofocus search
+        setTimeout(() => searchInput.focus(), 60);
+
+        // Filter as the user types
+        const filter = (query) => {
+            const q = query.trim().toLowerCase();
+            let visibleCount = 0;
+
+            if (q === '') {
+                // No filter — show everything
+                allRows.forEach(r => r.classList.remove('hidden'));
+                allSections.forEach(s => s.classList.remove('hidden'));
+                emptyMsg.style.display = 'none';
+                return;
+            }
+
+            allSections.forEach(section => {
+                const rows = section.querySelectorAll('.shortcut-row');
+                let sectionHasMatch = false;
+                rows.forEach(row => {
+                    const haystack = row.getAttribute('data-search') || '';
+                    const match = haystack.includes(q);
+                    row.classList.toggle('hidden', !match);
+                    if (match) {
+                        sectionHasMatch = true;
+                        visibleCount++;
+                    }
+                });
+                section.classList.toggle('hidden', !sectionHasMatch);
+            });
+
+            emptyMsg.style.display = visibleCount === 0 ? '' : 'none';
+        };
+
+        searchInput.addEventListener('input', (e) => filter(e.target.value));
+
+        // Keyboard handling — Esc clears search first, then closes
+        const closeOverlay = () => {
+            overlay.classList.remove('shortcut-visible');
+            setTimeout(() => overlay.remove(), 150);
+        };
+
+        overlay.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                if (searchInput.value !== '') {
+                    searchInput.value = '';
+                    filter('');
+                    e.preventDefault();
+                    e.stopPropagation();
+                } else {
+                    closeOverlay();
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+                return;
+            }
+        });
+
         // Close handlers
         overlay.addEventListener('click', (e) => {
-            if (e.target === overlay || e.target.id === 'shortcut-close') overlay.remove();
+            if (e.target === overlay) closeOverlay();
         });
+        overlay.querySelector('#shortcut-close').addEventListener('click', closeOverlay);
     },
 
     // Quick Query Buttons

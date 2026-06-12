@@ -121,9 +121,14 @@ $db  = $config['db'] ?? [];
                 <input type="checkbox" name="csrf_enabled" <?= ($sec['csrf_enabled'] ?? true) ? 'checked' : '' ?>>
                 <?= icon('hash', 14) ?> CSRF protection on forms and AJAX
             </label>
-            <label class="settings-check">
-                <input type="checkbox" name="force_https" <?= !empty($sec['force_https']) ? 'checked' : '' ?>>
+            <label class="settings-check<?= (!$auth->isHttps() && empty($sec['force_https'])) ? ' settings-check--disabled' : '' ?>">
+                <input type="checkbox" name="force_https"
+                    <?= !empty($sec['force_https']) ? 'checked' : '' ?>
+                    <?= (!$auth->isHttps() && empty($sec['force_https'])) ? 'disabled title="Open Ledger via https:// to enable this — enabling it over plain HTTP would lock you out if HTTPS isn\'t working on this server."' : '' ?>>
                 <?= icon('external-link', 14) ?> Force HTTPS redirect
+                <?php if (!$auth->isHttps() && empty($sec['force_https'])): ?>
+                    <span class="settings-check-hint">requires an HTTPS session to enable</span>
+                <?php endif; ?>
             </label>
             <label class="settings-check">
                 <input type="checkbox" name="read_only" <?= !empty($sec['read_only']) ? 'checked' : '' ?>>
@@ -255,6 +260,13 @@ $db  = $config['db'] ?? [];
                           placeholder="One IP or CIDR per line (empty = allow all)"
                 ><?= h(implode("\n", $sec['ip_whitelist'] ?? [])) ?></textarea>
                 <div class="settings-hint">e.g. 192.168.1.0/24, 10.0.0.50</div>
+            </div>
+            <div class="settings-field">
+                <label class="settings-label" for="s-proxies">Trusted Proxies</label>
+                <textarea id="s-proxies" name="trusted_proxies" class="settings-textarea" rows="3"
+                          placeholder="One proxy IP per line (empty = ignore forwarded headers)"
+                ><?= h(implode("\n", $sec['trusted_proxies'] ?? [])) ?></textarea>
+                <div class="settings-hint">X-Forwarded-For is only trusted from these IPs. Leave empty unless Ledger sits behind a reverse proxy.</div>
             </div>
             <div class="settings-field">
                 <label class="settings-label" for="s-hiddendb">Hidden Databases</label>

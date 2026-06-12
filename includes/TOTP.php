@@ -40,19 +40,29 @@ class LedgerTOTP
      */
     public static function verify(string $secret, string $code, int $window = 1): bool
     {
+        return self::verifyAt($secret, $code, $window) !== null;
+    }
+
+    /**
+     * Like verify() but returns the matched time-step (intdiv(time, period))
+     * on success, or null on failure. Callers can record the returned step to
+     * reject replay of the same code within its validity window.
+     */
+    public static function verifyAt(string $secret, string $code, int $window = 1): ?int
+    {
         $code = trim($code);
         if (strlen($code) !== self::DIGITS || !ctype_digit($code)) {
-            return false;
+            return null;
         }
 
         $now = time();
         for ($i = -$window; $i <= $window; $i++) {
-            $check = self::getCode($secret, $now + ($i * self::PERIOD));
-            if (hash_equals($check, $code)) {
-                return true;
+            $ts = $now + ($i * self::PERIOD);
+            if (hash_equals(self::getCode($secret, $ts), $code)) {
+                return intdiv($ts, self::PERIOD);
             }
         }
-        return false;
+        return null;
     }
 
     /**

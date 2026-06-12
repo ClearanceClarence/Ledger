@@ -83,7 +83,23 @@ function ledger_save_settings(array $config, $auth): array
     // Security
     $newConfig['security']['require_auth']       = isset($_POST['require_auth']);
     $newConfig['security']['csrf_enabled']       = isset($_POST['csrf_enabled']);
-    $newConfig['security']['force_https']        = isset($_POST['force_https']);
+
+    // force_https lockout guard: enabling HTTPS enforcement over a plain
+    // HTTP connection guarantees a lockout if HTTPS isn't actually served
+    // on this host (e.g. default XAMPP has no 443 listener — every request
+    // would redirect to a connection that can't be made). Only allow
+    // turning it ON when the current request is already HTTPS, which
+    // proves HTTPS works. Turning it OFF is always allowed.
+    $wantsForceHttps = isset($_POST['force_https']);
+    if ($wantsForceHttps && empty($config['security']['force_https']) && !$auth->isHttps()) {
+        return [
+            'success' => false,
+            'error'   => 'Cannot enable "Force HTTPS" over a plain HTTP connection — that would lock you out if HTTPS isn\'t working on this server. Open Ledger via https:// first, then enable it.',
+            'config'  => $newConfig,
+        ];
+    }
+    $newConfig['security']['force_https']        = $wantsForceHttps;
+
     $newConfig['security']['read_only']          = isset($_POST['read_only']);
     $newConfig['security']['session_lifetime']   = max(300, (int)($_POST['session_lifetime'] ?? 3600));
     $newConfig['security']['max_login_attempts'] = max(1, (int)($_POST['max_login_attempts'] ?? 5));
@@ -94,6 +110,13 @@ function ledger_save_settings(array $config, $auth): array
     $ipRaw = trim($_POST['ip_whitelist'] ?? '');
     $newConfig['security']['ip_whitelist'] = $ipRaw
         ? array_values(array_filter(array_map('trim', explode("\n", $ipRaw))))
+        : [];
+
+    // Trusted proxies — only these source IPs are allowed to set the client
+    // IP via X-Forwarded-For / X-Real-IP. Empty = forwarded headers ignored.
+    $proxyRaw = trim($_POST['trusted_proxies'] ?? '');
+    $newConfig['security']['trusted_proxies'] = $proxyRaw
+        ? array_values(array_filter(array_map('trim', explode("\n", $proxyRaw))))
         : [];
 
     // Hidden databases

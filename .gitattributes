@@ -1,0 +1,25 @@
+# Normalize all text files to LF in the repo, regardless of contributor OS.
+# Prevents Windows checkouts (core.autocrlf=true) from showing phantom
+# LF<->CRLF churn in diffs.
+* text=auto eol=lf
+
+# Explicit text types (defensive — covers files git might misdetect)
+*.php   text eol=lf
+*.js    text eol=lf
+*.css   text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.svg   text eol=lf
+*.html  text eol=lf
+*.htaccess text eol=lf
+
+# Binary — never touch these
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary

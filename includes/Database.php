@@ -39,6 +39,12 @@ class Database
         );
 
         if ($database) {
+            // Reject anything that isn't a plain identifier so a crafted db
+            // name can't inject extra DSN parameters via ';'. MySQL database
+            // names don't contain ';' or control chars in normal use.
+            if (preg_match('/[;\x00-\x1F]/', $database)) {
+                throw new InvalidArgumentException('Invalid database name.');
+            }
             $dsn .= ";dbname={$database}";
         }
 
@@ -47,6 +53,11 @@ class Database
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES   => false,
             PDO::MYSQL_ATTR_FOUND_ROWS   => true,
+            // Block stacked queries (e.g. "EXPLAIN SELECT 1; DROP TABLE x").
+            // Each statement Ledger runs is a single statement; the multi-
+            // statement import path splits and executes them one at a time,
+            // so this disables an attack surface without losing functionality.
+            PDO::MYSQL_ATTR_MULTI_STATEMENTS => false,
         ]);
 
         return $this->pdo;

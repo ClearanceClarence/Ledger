@@ -7,7 +7,7 @@
 // config.php — config is per-install and never updated on upgrade, so
 // keeping version here ensures the running code and the displayed version
 // can never drift apart.
-const LEDGER_VERSION = '1.0.1-beta';
+const LEDGER_VERSION = '1.0.2-beta';
 
 // Error Handling
 error_reporting(E_ALL);
@@ -44,7 +44,11 @@ $auth->sendSecurityHeaders();
 // 2) HTTPS enforcement
 if ($auth->shouldForceHttps()) {
     $url = 'https://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
-    header("Location: {$url}", true, 301);
+    // 302, not 301: force_https is a runtime-toggleable setting. Browsers
+    // cache 301s indefinitely, so if a user enables this on a host without
+    // working HTTPS, even fixing config.php wouldn't stop their browser
+    // from auto-redirecting out of cache. A 302 is never cached.
+    header("Location: {$url}", true, 302);
     exit;
 }
 
